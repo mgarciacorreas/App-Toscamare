@@ -1,35 +1,23 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useContext } from "react";
+import { AppProvider, AppContext } from "@/context/AppContext";
+import { Toast } from "@/components/ui";
+import LoginScreen from "@/views/LoginScreen";
+import MainLayout from "@/views/MainLayout";
 
-function App() {
-  const [count, setCount] = useState(0)
-
+function AppContent() {
+  const { session, toast } = useContext(AppContext);
   return (
     <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
+      {!session ? <LoginScreen /> : <MainLayout />}
+      <Toast toast={toast} />
     </>
-  )
+  );
 }
 
-export default App
+export default function App() {
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
+  );
+}
