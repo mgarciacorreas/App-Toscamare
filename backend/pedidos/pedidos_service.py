@@ -1,4 +1,4 @@
-from database.supabase_client.py import supabase
+from database.supabase_client import supabase
 
 class PedidosService:
 
