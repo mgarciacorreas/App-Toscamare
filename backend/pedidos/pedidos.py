@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from auth.jwt_handler import verificar_jwt
 from .pedidos_service import PedidosService
 
+
 pedidos_bp = Blueprint('pedidos', __name__, url_prefix='/api/pedidos')
 service = PedidosService()
 
@@ -70,14 +71,30 @@ def crear_pedido():
 
 
 
-
-@pedidos_bp.route('/<int:id>', methods=['PATCH'])
+# Función que actualiza el estado del pedido 
+@pedidos_bp.route('/<uuid:id>/estado', methods=['PATCH'])
 def actualizar_estado_pedido(id):
-    """Actualiza el estado de un pedido"""
-    datos = request.get_json()
-    estado_actual = datos.get('estado_actual')
-    
-    if not estado_actual:
-        return jsonify({"error": "estado_actual es requerido"}), 400
-    
-    return jsonify(service.actualizar_estado(id, estado_actual))
+
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    rol_usuario = payload.get("rol")
+
+    resultado = service.actualizar_estado(str(id), rol_usuario)
+
+    if "error" in resultado:
+        return jsonify(resultado), 400
+
+    return jsonify(resultado), 200

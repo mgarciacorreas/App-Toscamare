@@ -1,4 +1,6 @@
 from database.supabase_client import supabase
+from datetime import datetime
+
 
 class PedidosService:
     
@@ -52,6 +54,57 @@ class PedidosService:
             supabase
             .table("pedidos")
             .insert(nuevo_pedido)
+            .execute()
+        )
+
+        return response.data
+    
+
+    def actualizar_estado(self, pedido_id, rol_usuario):
+        # 1️⃣ Obtener pedido actual
+        pedido = (
+            supabase
+            .table("pedidos")
+            .select("*")
+            .eq("id", pedido_id)
+            .maybe_single()
+            .execute()
+        )
+        
+        rol_usuario = rol_usuario.strip().lower()
+
+        if not pedido.data:
+            return {"error": "Pedido no encontrado"}
+
+        estado_actual = int(pedido.data["estado"])
+        
+
+        # 2️⃣ Validar que el rol coincide con el estado actual
+        if rol_usuario not in self.ESTADOS:
+            return {"error": "Rol no válido"}
+
+        print("ROL DEL TOKEN:", rol_usuario)
+        print("ESTADO ACTUAL BD:", estado_actual)
+        print("ESTADO QUE DEBERÍA TENER ESE ROL:", self.ESTADOS.get(rol_usuario))
+        if self.ESTADOS[rol_usuario] != estado_actual:
+            return {"error": "No puedes modificar este pedido en su estado actual"}
+
+        # 3️⃣ Calcular siguiente estado
+        siguiente_estado = estado_actual + 1
+
+        if siguiente_estado > 3:
+            return {"error": "El pedido ya está finalizado"}
+
+        # 4️⃣ Actualizar estado
+        datos_actualizacion = {
+            "estado": siguiente_estado
+        }
+
+        response = (
+            supabase
+            .table("pedidos")
+            .update(datos_actualizacion)
+            .eq("id", pedido_id)
             .execute()
         )
 
