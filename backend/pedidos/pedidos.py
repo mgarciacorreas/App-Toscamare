@@ -33,16 +33,6 @@ def obtener_pedidos():
 
     return jsonify(pedidos), 200
 
-def obtener_por_rol(self, rol):
-    response = (
-        supabase
-        .table("pedidos")
-        .select("*")
-        .eq("estado", rol)
-        .execute()
-    )
-    return response.data
-
 @pedidos_bp.route('/<int:id>', methods=['GET'])
 def obtener_pedido(id):
     """Obtiene un pedido por ID"""
@@ -51,7 +41,35 @@ def obtener_pedido(id):
 @pedidos_bp.route('', methods=['POST'])
 def crear_pedido():
     """Crea un nuevo pedido"""
-    return jsonify(service.crear(request.json))
+
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    # Opcional: solo oficina puede crear pedidos
+    if payload.get("rol") != "oficina":
+        return jsonify({"error": "No autorizado"}), 403
+
+    datos = request.get_json()
+
+    pedido = service.crear(datos)
+
+    return jsonify(pedido), 201
+
+
+
+
 
 @pedidos_bp.route('/<int:id>', methods=['PATCH'])
 def actualizar_estado_pedido(id):
