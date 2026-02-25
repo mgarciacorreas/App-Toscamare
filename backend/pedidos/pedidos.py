@@ -1,14 +1,47 @@
 from flask import Blueprint, jsonify, request
+from auth.jwt_handler import verificar_jwt
 from .pedidos_service import PedidosService
-
 
 pedidos_bp = Blueprint('pedidos', __name__, url_prefix='/api/pedidos')
 service = PedidosService()
 
 @pedidos_bp.route('', methods=['GET'])
 def obtener_pedidos():
-    """Obtiene todos los pedidos"""
-    return jsonify(service.obtener_todos())
+    """Obtiene pedidos según el rol del usuario"""
+
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    rol_usuario = payload.get("rol")
+
+    if not rol_usuario:
+        return jsonify({"error": "Rol no encontrado en el token"}), 403
+
+    pedidos = service.obtener_por_rol(rol_usuario)
+
+    return jsonify(pedidos), 200
+
+def obtener_por_rol(self, rol):
+    response = (
+        supabase
+        .table("pedidos")
+        .select("*")
+        .eq("estado", rol)
+        .execute()
+    )
+    return response.data
 
 @pedidos_bp.route('/<int:id>', methods=['GET'])
 def obtener_pedido(id):
