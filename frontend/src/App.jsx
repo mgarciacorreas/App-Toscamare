@@ -1,8 +1,8 @@
-import { useContext } from "react";
-import { AppProvider, AppContext } from "@/context/AppContext";
-import { Toast } from "@/components/ui";
-import LoginScreen from "@/views/LoginScreen";
-import MainLayout from "@/views/MainLayout";
+import { useContext } from 'react';
+import { AppProvider, AppContext } from '@/context/AppContext';
+import { Toast } from '@/components/ui';
+import LoginScreen from '@/views/LoginScreen';
+import MainLayout from '@/views/MainLayout';
 
 function AppContent() {
   const { session, toast } = useContext(AppContext);
