@@ -1,4 +1,4 @@
-from backend.config.database import supabase
+from database.supabase_client.py import supabase
 
 class PedidosService:
 
