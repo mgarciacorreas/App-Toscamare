@@ -1,0 +1,115 @@
+# Imports
+
+#Blueprint --> Utilizado para organizar rutas en Flask mediante módulos. Permite crear rutas específicas para funcionalidades particulares, como productos en este caso.
+#Flask --> Framework web ligero para Python, utilizado para crear aplicaciones web y APIs RESTful.
+#request --> Objeto de Flask que contiene datos de la solicitud HTTP, como JSON, parámetros de consulta, etc.
+#jsonify --> Función de Flask que convierte datos de Python a formato JSON para enviar respuestas HTTP.
+#supabase --> Biblioteca de Python para interactuar con Supabase, una plataforma de backend como servicio que ofrece una base de datos PostgreSQL, autenticación, almacenamiento y funciones en la nube.    
+#os --> Módulo de Python para interactuar con el sistema operativo, utilizado aquí para acceder a variables de entorno.
+#dotenv --> Biblioteca para cargar variables de entorno desde un archivo .env, lo que permite mantener las credenciales y configuraciones sensibles fuera del código fuente.
+
+import os
+from flask import request, jsonify, Blueprint
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+#Creamos el blueprint
+productos_bp = Blueprint('productos', __name__)
+
+# 2. Conectar con Supabase usando tus credenciales reales. Se leen de las variables de entorno para mantener la seguridad. No se hardcodean en el código fuente.
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+#Funcion auxiliar. Crea un cliente de Supabase utilizando el token de usuario. Clave para que funcionen las politicas de seguridad Row Level Security (RLS) en tu base de datos. Sin este paso, las consultas podrían no retornar datos o fallar debido a restricciones de acceso.
+def get_supabase_client(token):
+    return create_client(
+        SUPABASE_URL,
+        SUPABASE_KEY,
+        options={
+            "headers": {
+                #Pasamos el token de usuario autenticado. Supabase sabrá quien es y qué rol tiene.
+                "Authorization": f"Bearer {token}"
+            }
+        }
+    )
+
+# --- RUTAS DE LA API ---
+
+# 1. Listar productos de un pedido (GET). Depende del rol y el estado del pedido (RLS) el mostrar o no los productos. Si el usuario no tiene permiso, la respuesta será una lista vacía o un error de autorización, dependiendo de cómo estén configuradas las políticas en Supabase.
+@productos_bp.route("/api/pedidos/<pedido_id>/productos", methods=['GET'])
+def listar_productos(pedido_id):
+    try:
+
+        #Obtenemos el token de Authorization
+        token = request.headers.get("Authorization").replace("Bearer ", "")
+
+        #Creamos el cliente Supabase con ese token
+        sb = get_supabase_client(token)
+
+        # Consultamos la tabla 'pedido_productos', filtrando por el pedido correspondiente
+        response = sb.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
+
+        #Devolvemos la lista d eproductos en formato JSON
+        return jsonify(response.data), 200
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# 2. Añadir un producto a un pedido (POST). Solo el rol de oficina (controlado por Supabase RLS).
+@productos_bp.route('/api/pedido-productos', methods=['POST'])
+def añadir_producto():
+    try:
+
+        #Obtenemos el token de Authorization
+        token = request.headers.get("Authorization").replace("Bearer ", "")
+
+        #Creamos el cliente Supabase con ese token
+        sb = get_supabase_client(token)
+
+        #Datos enviados en el cuerpo de la solicitud (JSON)
+        datos = request.json
+
+        # Insertamos los datos en la tabla 'pedido_productos'
+        nueva_fila = {
+            "pedido_id": datos['pedido_id'],
+            "nombre_producto": datos['nombre_producto'],
+            "cantidad": datos['cantidad']
+        }
+        response = sb.table("pedido_productos").insert(nueva_fila).execute()
+
+        #Devolvemos la nueva fila insertada en formato JSON
+        return jsonify(response.data), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+
+
+# 3. Actualizar un producto de un pedido (PUT). Solo el rol de almacén y logística (estados 0 y 1, todo controlado por Supabase RLS).
+@productos_bp.route('/api/pedido-productos/<producto_id>', methods=['PUT'])
+def actualizar_producto(producto_id):
+    try:
+
+        #Obtenemos el token de Authorization
+        token = request.headers.get("Authorization").replace("Bearer ", "")
+
+        #Creamos el cliente Supabase con ese token
+        sb = get_supabase_client(token)
+
+        #Datos enviados en el cuerpo de la solicitud (JSON)
+        datos = request.json
+
+        # Actualizamos los datos en la tabla 'pedido_productos'
+        response = sb.table("pedido_productos").update({
+            "nombre_producto": datos.get("nombre_producto"),
+            "cantidad": datos.get("cantidad")
+            }).eq("id", producto_id).execute()
+
+        #Devolvemos la fila actualizada en formato JSON
+        return jsonify(response.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
