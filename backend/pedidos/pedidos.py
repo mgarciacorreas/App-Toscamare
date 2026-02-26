@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
-from backend.pedidos.pedidos_service import PedidosService
+from auth.jwt_handler import verificar_jwt
+from .pedidos_service import PedidosService
 
 
 pedidos_bp = Blueprint('pedidos', __name__, url_prefix='/api/pedidos')
@@ -7,8 +8,31 @@ service = PedidosService()
 
 @pedidos_bp.route('', methods=['GET'])
 def obtener_pedidos():
-    """Obtiene todos los pedidos"""
-    return jsonify(service.obtener_todos())
+    """Obtiene pedidos según el rol del usuario"""
+
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    rol_usuario = payload.get("rol")
+
+    if not rol_usuario:
+        return jsonify({"error": "Rol no encontrado en el token"}), 403
+
+    pedidos = service.obtener_por_rol(rol_usuario)
+
+    return jsonify(pedidos), 200
 
 @pedidos_bp.route('/<int:id>', methods=['GET'])
 def obtener_pedido(id):
@@ -18,15 +42,59 @@ def obtener_pedido(id):
 @pedidos_bp.route('', methods=['POST'])
 def crear_pedido():
     """Crea un nuevo pedido"""
-    return jsonify(service.crear(request.json))
 
-@pedidos_bp.route('/<int:id>', methods=['PATCH'])
-def actualizar_estado_pedido(id):
-    """Actualiza el estado de un pedido"""
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    # Opcional: solo oficina puede crear pedidos
+    if payload.get("rol") != "oficina":
+        return jsonify({"error": "No autorizado"}), 403
+
     datos = request.get_json()
-    estado_actual = datos.get('estado_actual')
-    
-    if not estado_actual:
-        return jsonify({"error": "estado_actual es requerido"}), 400
-    
-    return jsonify(service.actualizar_estado(id, estado_actual))
+
+    pedido = service.crear(datos)
+
+    return jsonify(pedido), 201
+
+
+
+
+# Función que actualiza el estado del pedido 
+@pedidos_bp.route('/<uuid:id>/estado', methods=['PATCH'])
+def actualizar_estado_pedido(id):
+
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    rol_usuario = payload.get("rol")
+
+    resultado = service.actualizar_estado(str(id), rol_usuario)
+
+    if "error" in resultado:
+        return jsonify(resultado), 400
+
+    return jsonify(resultado), 200
