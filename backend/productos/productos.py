@@ -113,3 +113,27 @@ def actualizar_producto(producto_id):
         return jsonify(response.data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+
+# Eliminar un producto de un pedido (DELETE). Solo el rol de oficina (controlado por Supabase RLS).
+@productos_bp.route('/api/pedido-productos/<producto_id>', methods=['DELETE'])
+def eliminar_producto(producto_id):
+    try:
+
+        #Obtenemos el token de Authorization
+        token = request.headers.get("Authorization").replace("Bearer ", "")
+
+        #Creamos el cliente Supabase con ese token
+        sb = get_supabase_client(token)
+
+        # Eliminamos la fila de la tabla 'pedido_productos'
+        response = sb.table("pedido_productos").delete().eq("id", producto_id).execute()
+
+        # Si no se eliminó ningún registro, significa que el producto no existe o ya fue eliminado. Devolvemos un mensaje de error.
+        if not response.data:
+            return jsonify({"message": "Producto no encontrado o ya eliminado"}), 404
+        
+        #En el caso de éxito, devolvemos un mensaje de confirmación
+        return jsonify({"message": "Producto eliminado correctamente"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
