@@ -1,6 +1,8 @@
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
 from config import Config
+from functools import wraps
+from flask import jsonify, request
 
 def generar_jwt(user_data):
     """
@@ -27,3 +29,32 @@ def verificar_jwt(token):
         return payload
     except JWTError:
         return None
+    
+def requiere_admin(funcion):
+    @wraps(funcion)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        
+        try:
+            auth_token = token.split(' ')[1]
+        except:
+            return jsonify({"error": "Formato de token no válido"}), 401
+        
+        if not auth_token:
+            return jsonify({"error": "Token no proporcionado"}), 401
+        
+        payload = verificar_jwt(auth_token)
+        
+        if not payload:
+            return jsonify({"error": "Token inválido"}), 401
+        
+        if payload['rol'] == 'admin':
+            return funcion(*args, **kwargs)
+        else:
+            return jsonify({"error": "No tienes permisos"}), 403
+    
+    return wrapper
+        
+        
+        
+        
