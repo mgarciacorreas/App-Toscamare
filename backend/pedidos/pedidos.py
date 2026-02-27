@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from auth.jwt_handler import verificar_jwt
 from .pedidos_service import PedidosService
 
@@ -98,3 +98,14 @@ def actualizar_estado_pedido(id):
         return jsonify(resultado), 400
 
     return jsonify(resultado), 200
+
+@pedidos_bp.route('/<uuid:id>/export/excel', methods=['GET'])
+def exportar_pedido_excel(id):
+    archivo_excel = service.exportar_a_excel(str(id))
+    
+    return send_file(
+        archivo_excel,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'pedido_{id}.xlsx'
+    )

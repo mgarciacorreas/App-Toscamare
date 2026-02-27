@@ -1,6 +1,7 @@
 from database.supabase_client import supabase
 from datetime import datetime
-
+from openpyxl import Workbook
+from io import BytesIO
 
 class PedidosService:
     
@@ -26,10 +27,18 @@ class PedidosService:
         return response.data
 
     def obtener_por_rol(self, rol):
-        if rol not in self.ESTADOS:
+        if not rol:
             return []
 
-        estado_num = self.ESTADOS[rol]
+        rol_norm = rol.strip().lower()
+
+        if rol_norm == "admin":
+            return self.obtener_todos()
+
+        if rol_norm not in self.ESTADOS:
+            return []
+
+        estado_num = self.ESTADOS[rol_norm]
         return self.obtener_por_estado(estado_num)
     
     
@@ -109,3 +118,29 @@ class PedidosService:
         )
 
         return response.data
+    
+    def exportar_a_excel(self, pedido_id):
+        response = supabase.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
+        
+        productos = response.data
+        
+        print("Productos obtenidos:", productos)
+        
+        wb = Workbook()
+        ws = wb.active
+        
+        ws.append(["Código", "Nombre", "Cantidad"])
+        
+        for producto in productos:
+            ws.append([
+                producto['id'],
+                producto['nombre_producto'],
+                producto['cantidad']
+            ])
+        
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        return output
+        

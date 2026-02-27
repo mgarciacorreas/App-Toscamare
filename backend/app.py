@@ -4,20 +4,14 @@ from config import Config
 from auth.microsoft_oauth import iniciar_login, manejar_callback
 from auth.jwt_handler import generar_jwt, verificar_jwt
 from database.supabase_client import supabase
-<<<<<<< HEAD
 from usuarios.usuarios import usuarios_bp
-=======
 from pedidos.pedidos import pedidos_bp
->>>>>>> 69e325f9603b7f05fa8d5cf511649d73be7e27d2
 
 app = Flask(__name__)
 CORS(app, origins=[Config.FRONTEND_URL])
 
-<<<<<<< HEAD
 app.register_blueprint(usuarios_bp)
-=======
 app.register_blueprint(pedidos_bp)
->>>>>>> 69e325f9603b7f05fa8d5cf511649d73be7e27d2
 
 @app.route('/health', methods=['GET'])
 def health():

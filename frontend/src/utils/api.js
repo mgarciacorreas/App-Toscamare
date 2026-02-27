@@ -61,6 +61,28 @@ async function request(path, opts = {}) {
   return res.json();
 }
 
+// ── Normalizers ──────────────────────────────────────────────
+
+function normalizePedido(p) {
+  const estado = p.estado_actual ?? p.estado ?? 0;
+  const createdAt = p.fecha_creacion || p.created_at || p.fecha || p.fecha_pedido || null;
+  const updatedAt = p.fecha_actualizacion || p.updated_at || createdAt || null;
+
+  return {
+    ...p,
+    id: p.id,
+    codigo: p.codigo || (p.id != null ? 'PED-' + String(p.id).slice(0, 8) : 'PED-SIN-ID'),
+    cliente: p.cliente || p.cliente_nombre || p.nombre_cliente || '',
+    direccion: p.direccion || p.direccion_entrega || '',
+    prioridad: p.prioridad || 'media',
+    estado_actual: Number.isFinite(estado) ? estado : parseInt(estado, 10) || 0,
+    fecha_creacion: createdAt,
+    fecha_actualizacion: updatedAt,
+    pdf_nombre: p.pdf_nombre || p.pdf || null,
+    pdf_ruta: p.pdf_ruta || p.pdf_url || null,
+  };
+}
+
 // ── Auth (adapted to colleague's Flask backend) ──────────────
 
 /**
@@ -136,11 +158,15 @@ export function fetchPedidos(params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v != null && v !== '') qs.set(k, v);
   });
-  return request('/pedidos?' + qs.toString());
+  return request('/pedidos?' + qs.toString()).then((data) =>
+    Array.isArray(data) ? data.map(normalizePedido) : data
+  );
 }
 
 export function fetchPedido(id) {
-  return request('/pedidos/' + id);
+  return request('/pedidos/' + id).then((data) =>
+    Array.isArray(data) ? data.map(normalizePedido) : normalizePedido(data)
+  );
 }
 
 export function createPedido(data) {
@@ -235,11 +261,11 @@ export function getPDFUrl(pedidoId) {
 // ── Usuarios ─────────────────────────────────────────────────
 
 export function fetchUsuarios() {
-  return request('/usuarios/');
+  return request('/usuarios').then((data) => data.usuarios || data);
 }
 
 export function createUsuario(data) {
-  return request('/usuarios/', {
+  return request('/usuarios', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),

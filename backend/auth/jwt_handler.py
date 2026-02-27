@@ -55,6 +55,53 @@ def requiere_admin(funcion):
     
     return wrapper
         
+def requiere_autenticacion(funcion):
+    @wraps(funcion)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get('Authorization')
         
+        try:
+            auth_token = token.split(' ')[1]
+        except:
+            return jsonify({"error": "Formato de token no válido"}), 401
+        
+        if not auth_token:
+            return jsonify({"error": "Token no proporcionado"}), 401
+        
+        payload = verificar_jwt(auth_token)
+        
+        if not payload:
+            return jsonify({"error": "Token inválido"}), 401
+        
+        return funcion(*args, **kwargs)
+        
+    return wrapper
+
+def requiere_rol(rol_requerido):
+    def decorator(funcion):
+        @wraps(funcion)
+        def wrapper(*args, **kwargs):
+            token = request.headers.get('Authorization')
+            
+            try:
+                auth_token = token.split(' ')[1]
+            except:
+                return jsonify({"error": "Formato de token no válido"}), 401
+            
+            if not auth_token:
+                return jsonify({"error": "Token no proporcionado"}), 401
+            
+            payload = verificar_jwt(auth_token)
+            
+            if not payload:
+                return jsonify({"error": "Token inválido"}), 401
+            
+            if payload.get('rol') == rol_requerido:
+                return funcion(*args, **kwargs)
+            else:
+                return jsonify({"error": "No tienes permisos para acceder a esta URL"}), 403
+            
+        return wrapper
+    return decorator
         
         
