@@ -77,7 +77,10 @@ def requiere_autenticacion(funcion):
         
     return wrapper
 
-def requiere_rol(rol_requerido):
+def requiere_rol(roles_permitidos):
+    if isinstance(roles_permitidos, str):
+        roles_permitidos=[roles_permitidos]
+        
     def decorator(funcion):
         @wraps(funcion)
         def wrapper(*args, **kwargs):
@@ -96,7 +99,7 @@ def requiere_rol(rol_requerido):
             if not payload:
                 return jsonify({"error": "Token inválido"}), 401
             
-            if payload.get('rol') == rol_requerido:
+            if payload.get('rol') in roles_permitidos:
                 return funcion(*args, **kwargs)
             else:
                 return jsonify({"error": "No tienes permisos para acceder a esta URL"}), 403

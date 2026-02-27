@@ -1,12 +1,14 @@
 from flask import Blueprint, jsonify, request, send_file
 from auth.jwt_handler import verificar_jwt
 from .pedidos_service import PedidosService
+from auth.jwt_handler import requiere_autenticacion, requiere_rol
 
 
 pedidos_bp = Blueprint('pedidos', __name__, url_prefix='/api/pedidos')
 service = PedidosService()
 
 @pedidos_bp.route('', methods=['GET'])
+@requiere_autenticacion
 def obtener_pedidos():
     """Obtiene pedidos según el rol del usuario"""
 
@@ -35,11 +37,13 @@ def obtener_pedidos():
     return jsonify(pedidos), 200
 
 @pedidos_bp.route('/<int:id>', methods=['GET'])
+@requiere_autenticacion
 def obtener_pedido(id):
     """Obtiene un pedido por ID"""
     return jsonify(service.obtener_por_id(id))
 
 @pedidos_bp.route('', methods=['POST'])
+@requiere_rol("oficina")
 def crear_pedido():
     """Crea un nuevo pedido"""
 
@@ -73,6 +77,7 @@ def crear_pedido():
 
 # Función que actualiza el estado del pedido 
 @pedidos_bp.route('/<uuid:id>/estado', methods=['PATCH'])
+@requiere_autenticacion
 def actualizar_estado_pedido(id):
 
     auth_header = request.headers.get("Authorization")
@@ -100,6 +105,7 @@ def actualizar_estado_pedido(id):
     return jsonify(resultado), 200
 
 @pedidos_bp.route('/<uuid:id>/export/excel', methods=['GET'])
+@requiere_rol("oficina")
 def exportar_pedido_excel(id):
     archivo_excel = service.exportar_a_excel(str(id))
     

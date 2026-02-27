@@ -12,6 +12,7 @@ import os
 from flask import request, jsonify, Blueprint
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from auth.jwt_handler import requiere_autenticacion, requiere_rol
 
 load_dotenv()
 
@@ -41,6 +42,7 @@ def get_supabase_client(token):
 
 # 1. Listar productos de un pedido (GET). Depende del rol y el estado del pedido (RLS) el mostrar o no los productos. Si el usuario no tiene permiso, la respuesta será una lista vacía o un error de autorización, dependiendo de cómo estén configuradas las políticas en Supabase.
 @productos_bp.route("/api/pedidos/<pedido_id>/productos", methods=['GET'])
+@requiere_autenticacion
 def listar_productos(pedido_id):
     try:
 
@@ -61,6 +63,7 @@ def listar_productos(pedido_id):
 
 # 2. Añadir un producto a un pedido (POST). Solo el rol de oficina (controlado por Supabase RLS).
 @productos_bp.route('/api/pedido-productos', methods=['POST'])
+@requiere_rol(["oficina", "almacen", "logistica"])
 def añadir_producto():
     try:
 
@@ -91,6 +94,7 @@ def añadir_producto():
 
 # 3. Actualizar un producto de un pedido (PUT). Solo el rol de almacén y logística (estados 0 y 1, todo controlado por Supabase RLS).
 @productos_bp.route('/api/pedido-productos/<producto_id>', methods=['PUT'])
+@requiere_rol(["oficina", "logistica"])
 def actualizar_producto(producto_id):
     try:
 
@@ -117,6 +121,7 @@ def actualizar_producto(producto_id):
 
 # Eliminar un producto de un pedido (DELETE). Solo el rol de oficina (controlado por Supabase RLS).
 @productos_bp.route('/api/pedido-productos/<producto_id>', methods=['DELETE'])
+@requiere_rol(["oficina", "almacen", "logistica"])
 def eliminar_producto(producto_id):
     try:
 
