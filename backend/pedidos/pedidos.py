@@ -40,14 +40,13 @@ def obtener_pedidos():
 
     return jsonify(pedidos), 200
 
-@pedidos_bp.route('/<int:id>', methods=['GET'])
-@requiere_autenticacion
 
 # =========================
 # OBTENER PEDIDO POR ID
 # =========================
 
 @pedidos_bp.route('/<uuid:id>', methods=['GET'])
+@requiere_autenticacion
 def obtener_pedido(id):
 
     resultado = service.obtener_por_id(str(id))
