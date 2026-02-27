@@ -7,6 +7,10 @@ from auth.jwt_handler import requiere_autenticacion, requiere_rol
 pedidos_bp = Blueprint('pedidos', __name__, url_prefix='/api/pedidos')
 service = PedidosService()
 
+# =========================
+# OBTENER PEDIDOS POR ROL
+# =========================
+
 @pedidos_bp.route('', methods=['GET'])
 @requiere_autenticacion
 def obtener_pedidos():
@@ -38,17 +42,30 @@ def obtener_pedidos():
 
 @pedidos_bp.route('/<int:id>', methods=['GET'])
 @requiere_autenticacion
-def obtener_pedido(id):
-    """Obtiene un pedido por ID"""
-    return jsonify(service.obtener_por_id(id))
 
+# =========================
+# OBTENER PEDIDO POR ID
+# =========================
+
+@pedidos_bp.route('/<uuid:id>', methods=['GET'])
+def obtener_pedido(id):
+
+    resultado = service.obtener_por_id(str(id))
+
+    if not resultado:
+        return jsonify({"error": "Pedido no encontrado"}), 404
+
+    return jsonify(resultado), 200
+
+# =========================
+# CREAR PEDIDO
+# =========================
 @pedidos_bp.route('', methods=['POST'])
 @requiere_rol("oficina")
 def crear_pedido():
-    """Crea un nuevo pedido"""
+    """Crea un nuevo pedido con PDF y extrae datos automáticamente"""
 
     auth_header = request.headers.get("Authorization")
-
     if not auth_header:
         return jsonify({"error": "Token requerido"}), 401
 
@@ -62,20 +79,78 @@ def crear_pedido():
     if not payload:
         return jsonify({"error": "Token inválido"}), 401
 
-    # Opcional: solo oficina puede crear pedidos
     if payload.get("rol") != "oficina":
         return jsonify({"error": "No autorizado"}), 403
 
-    datos = request.get_json()
+    # DEBUG: Ver qué se está recibiendo
+    print(f"[DEBUG] request.form keys: {list(request.form.keys())}")
+    print(f"[DEBUG] request.files keys: {list(request.files.keys())}")
+    
+    # Campos requeridos
+    cliente_nombre = request.form.get("cliente_nombre", "").strip()
+    archivo_pdf = request.files.get("pdf")
+    
+    print(f"[DEBUG] cliente_nombre: {cliente_nombre}")
+    print(f"[DEBUG] archivo_pdf: {archivo_pdf is not None}")
 
-    pedido = service.crear(datos)
+    if not cliente_nombre:
+        return jsonify({"error": "cliente_nombre es requerido"}), 400
+    
+    if not archivo_pdf:
+        return jsonify({"error": "PDF es requerido"}), 400
 
-    return jsonify(pedido), 201
+    # Extraer usuario_responsable_id del JWT
+    usuario_responsable_id = payload.get("user_id")
+    if not usuario_responsable_id:
+        return jsonify({"error": "No se pudo obtener el ID del usuario del token"}), 401
+    
+    # Crear el pedido con solo estos datos; OCR extraerá el resto
+    resultado = service.crear_con_pdf(
+        cliente_nombre=cliente_nombre,
+        usuario_responsable_id=usuario_responsable_id,
+        archivo_pdf=archivo_pdf
+    )
+
+    if "error" in resultado:
+        return jsonify(resultado), 400
+
+    return jsonify(resultado), 201
+
+# @pedidos_bp.route('', methods=['POST'])
+# def crear_pedido():
+#     """Crea un nuevo pedido"""
+
+#     auth_header = request.headers.get("Authorization")
+
+#     if not auth_header:
+#         return jsonify({"error": "Token requerido"}), 401
+
+#     try:
+#         token = auth_header.split(" ")[1]
+#     except IndexError:
+#         return jsonify({"error": "Formato de token inválido"}), 401
+
+#     payload = verificar_jwt(token)
+
+#     if not payload:
+#         return jsonify({"error": "Token inválido"}), 401
+
+#     # Opcional: solo oficina puede crear pedidos
+#     if payload.get("rol") != "oficina":
+#         return jsonify({"error": "No autorizado"}), 403
+
+#     datos = request.get_json()
+
+#     pedido = service.crear(datos)
+
+#     return jsonify(pedido), 201
 
 
 
+# =========================
+# ACTUALIZAR ESTADO PEDIDO
+# =========================
 
-# Función que actualiza el estado del pedido 
 @pedidos_bp.route('/<uuid:id>/estado', methods=['PATCH'])
 @requiere_autenticacion
 def actualizar_estado_pedido(id):
@@ -101,6 +176,35 @@ def actualizar_estado_pedido(id):
 
     if "error" in resultado:
         return jsonify(resultado), 400
+
+    return jsonify(resultado), 200
+
+
+# =========================
+# OBTENER PDF 
+# =========================
+
+@pedidos_bp.route('/<uuid:id>/pdf', methods=['GET'])
+def obtener_pdf(id):
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return jsonify({"error": "Token requerido"}), 401
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return jsonify({"error": "Formato de token inválido"}), 401
+
+    payload = verificar_jwt(token)
+
+    if not payload:
+        return jsonify({"error": "Token inválido"}), 401
+
+    resultado = service.obtener_pdf_firmado(str(id))
+
+    if "error" in resultado:
+        return jsonify(resultado), 404
 
     return jsonify(resultado), 200
 

@@ -7,6 +7,7 @@ from database.supabase_client import supabase
 from usuarios.usuarios import usuarios_bp
 from pedidos.pedidos import pedidos_bp
 
+
 app = Flask(__name__)
 CORS(app, origins=[Config.FRONTEND_URL])
 
