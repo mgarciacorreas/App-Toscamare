@@ -11,6 +11,7 @@
 import os
 from flask import request, jsonify, Blueprint
 from supabase import create_client, Client
+from database.supabase_client import supabase
 from dotenv import load_dotenv
 from auth.jwt_handler import requiere_autenticacion, requiere_rol
 from utils.error_handler import respuesta_error
@@ -48,22 +49,22 @@ def get_supabase_client(token):
 def listar_productos(pedido_id):
     try:
         #Obtenemos el token de Authorization
-        auth_header = request.headers.get("Authorization")
-        token = auth_header.replace("Bearer ", "") if auth_header else ""
+        # auth_header = request.headers.get("Authorization")
+        # token = auth_header.replace("Bearer ", "") if auth_header else ""
 
-        #Decodificar el JWT para revisar el rol
-        from auth.jwt_handler import verificar_jwt
-        payload = verificar_jwt(token)
-        rol = payload.get("rol") if payload else None
+        # #Decodificar el JWT para revisar el rol
+        # from auth.jwt_handler import verificar_jwt
+        # payload = verificar_jwt(token)
+        # rol = payload.get("rol") if payload else None
 
         #Si el usuario es admin usamos el cliente global (service key) para saltar RLS
-        if rol == "admin":
-            sb = supabase  # servicio con clave de administrador
-        else:
-            sb = get_supabase_client(token)
+        # if rol == "admin":
+        #     sb = supabase  # servicio con clave de administrador
+        # else:
+        #sb = get_supabase_client(token)
 
         # Consultamos la tabla 'pedido_productos', filtrando por el pedido correspondiente
-        response = sb.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
+        response = supabase.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
 
         #Devolvemos la lista de productos en formato JSON
         return jsonify(response.data), 200
