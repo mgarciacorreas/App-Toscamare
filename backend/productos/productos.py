@@ -72,7 +72,7 @@ def listar_productos(pedido_id):
 
 # 2. Añadir un producto a un pedido (POST). Solo el rol de oficina (controlado por Supabase RLS).
 @productos_bp.route('/api/pedido-productos', methods=['POST'])
-@requiere_rol(["oficina", "almacen", "logistica"])
+@requiere_rol(["oficina", "almacen", "logistica", "admin"])
 def añadir_producto():
     try:
 
@@ -92,7 +92,8 @@ def añadir_producto():
         nueva_fila = {
             "pedido_id": datos['pedido_id'],
             "nombre_producto": datos['nombre_producto'],
-            "cantidad": datos['cantidad']
+            "cantidad": datos['cantidad'],
+            "precio": datos['precio'] #####################################3
         }
         response = sb.table("pedido_productos").insert(nueva_fila).execute()
 
@@ -106,7 +107,7 @@ def añadir_producto():
 
 # 3. Actualizar un producto de un pedido (PUT). Solo el rol de almacén y logística (estados 0 y 1, todo controlado por Supabase RLS).
 @productos_bp.route('/api/pedido-productos/<producto_id>', methods=['PUT'])
-@requiere_rol(["oficina", "logistica"])
+@requiere_rol(["oficina", "logistica", "admin"])
 def actualizar_producto(producto_id):
     try:
 
@@ -125,7 +126,8 @@ def actualizar_producto(producto_id):
         # Actualizamos los datos en la tabla 'pedido_productos'
         response = sb.table("pedido_productos").update({
             "nombre_producto": datos.get("nombre_producto"),
-            "cantidad": datos.get("cantidad")
+            "cantidad": datos.get("cantidad"), 
+            "precio": datos.get("precio") ###############################
             }).eq("id", producto_id).execute()
 
         #Devolvemos la fila actualizada en formato JSON
@@ -136,7 +138,7 @@ def actualizar_producto(producto_id):
 
 # Eliminar un producto de un pedido (DELETE). Solo el rol de oficina (controlado por Supabase RLS).
 @productos_bp.route('/api/pedido-productos/<producto_id>', methods=['DELETE'])
-@requiere_rol(["oficina", "almacen", "logistica"])
+@requiere_rol(["oficina", "almacen", "logistica", "admin"])
 def eliminar_producto(producto_id):
     try:
 
