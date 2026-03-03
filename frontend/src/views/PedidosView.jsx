@@ -61,7 +61,7 @@ export default function PedidosView() {
   };
 
   const canAdvance = (p) => {
-    if (isAdmin) return true;
+    if (isModerator) return true;
     return ESTADOS[p.estado_actual]?.role === session.user.rol;
   };
 
