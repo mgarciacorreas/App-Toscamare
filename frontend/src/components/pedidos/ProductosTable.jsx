@@ -27,18 +27,22 @@ export default function ProductosTable({ pedidoId, editable, canManage }) {
 
   const saveEdit = async (prod) => {
     try {
+      // 1. Enviamos la actualización
       await api.updateProducto(prod.id, {
         nombre_producto: prod.nombre_producto,
         cantidad: Number(editVal),
+        // precio: prod.precio // Asegúrate de mantener el precio si es necesario
       });
-      setProductos((prev) =>
-        prev.map((p) =>
-          p.id === prod.id ? { ...p, cantidad: Number(editVal) } : p,
-        ),
-      );
+
+      // 2. En lugar de actualizar el estado a mano con .map,
+      // volvemos a llamar a la API para tener los datos reales de la DB
+      const productosActualizados = await api.fetchProductos(pedidoId);
+      setProductos(productosActualizados);
+
       setEditingId(null);
       showToast("Cantidad actualizada");
     } catch (e) {
+      console.error("Error guardando:", e);
       showToast(e.message, "error");
     }
   };
