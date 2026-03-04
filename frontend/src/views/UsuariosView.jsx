@@ -4,11 +4,14 @@ import { ROLE_META } from "@/config/constants";
 import { formatDate } from "@/utils/helpers";
 import { SVG, Btn, Badge, Modal, Input, Select } from "@/components/ui";
 import * as api from "@/utils/api";
+import UserCardSkeleton from "@/components/userCard/UserCardSkeleton";
 
-// --- Componente UserActions y MenuBtn se mantienen igual que antes ---
+import "./UsuariosView.css";
+
 const UserActions = ({ u, onAction, isSelf, onMenuToggle }) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
+
   useEffect(() => {
     const close = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
@@ -21,7 +24,7 @@ const UserActions = ({ u, onAction, isSelf, onMenuToggle }) => {
   }, [onMenuToggle]);
 
   return (
-    <div ref={menuRef} style={{ position: "relative" }}>
+    <div ref={menuRef} className="user-actions-wrapper">
       <button
         onClick={() => {
           const next = !isOpen;
@@ -46,21 +49,7 @@ const UserActions = ({ u, onAction, isSelf, onMenuToggle }) => {
         </svg>
       </button>
       {isOpen && (
-        <div
-          className="anim-scale"
-          style={{
-            position: "absolute",
-            right: 0,
-            bottom: "calc(100% + 10px)",
-            zIndex: 10000,
-            background: "var(--bg-3)",
-            border: "1px solid var(--border-3)",
-            borderRadius: "var(--r2)",
-            width: 195,
-            boxShadow: "0 -10px 40px rgba(0,0,0,0.8)",
-            padding: 6,
-          }}
-        >
+        <div className="anim-scale dropdown-menu">
           <MenuBtn
             icon="user"
             label="Editar nombre"
@@ -87,13 +76,7 @@ const UserActions = ({ u, onAction, isSelf, onMenuToggle }) => {
           />
           {!isSelf && (
             <>
-              <div
-                style={{
-                  height: 1,
-                  background: "var(--border-1)",
-                  margin: "4px 8px",
-                }}
-              />
+              <div className="dropdown-divider" />
               <MenuBtn
                 icon="trash"
                 label="Eliminar"
@@ -112,50 +95,98 @@ const UserActions = ({ u, onAction, isSelf, onMenuToggle }) => {
 };
 
 const MenuBtn = ({ icon, label, onClick, color = "var(--text-2)" }) => (
-  <button
-    onClick={onClick}
-    className="menu-item"
-    style={{
-      width: "100%",
-      padding: "10px 12px",
-      display: "flex",
-      alignItems: "center",
-      gap: 12,
-      background: "none",
-      border: "none",
-      borderRadius: "var(--r1)",
-      cursor: "pointer",
-      color,
-      fontSize: 13,
-    }}
-  >
+  <button onClick={onClick} className="menu-item" style={{ color }}>
     <SVG name={icon} size={15} color={color} />
-    <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+    <span className="menu-btn-label">{label}</span>
   </button>
 );
 
+const UserCard = ({
+  user,
+  activeMenuId,
+  isSelf,
+  onAction,
+  onMenuToggle,
+  index,
+}) => {
+  const meta = ROLE_META[user.rol];
+
+  return (
+    <div
+      className="user-card"
+      style={{
+        zIndex: activeMenuId === user.id ? 9999 : 1,
+        animationDelay: `${index * 0.15}s`, // <-- Animación en cascada
+      }}
+    >
+      <div className="card-header">
+        <div className="card-user-info">
+          <div
+            className="card-avatar"
+            style={{
+              background: meta.color + "15",
+              border: `1px solid ${meta.color}30`,
+            }}
+          >
+            <SVG name="user" size={24} color={meta.color} />
+          </div>
+          <div>
+            <div className="card-user-name">{user.nombre}</div>
+            <div className="card-user-email">{user.email}</div>
+          </div>
+        </div>
+
+        <UserActions
+          u={user}
+          isSelf={isSelf}
+          onAction={onAction}
+          onMenuToggle={onMenuToggle}
+        />
+      </div>
+
+      <div className="card-footer">
+        <Badge color={meta.color}>{meta.label}</Badge>
+        <div className="card-date">{formatDate(user.created_at)}</div>
+      </div>
+    </div>
+  );
+};
+
 export default function UsuariosView() {
   const { usuarios, showToast, session, loadUsuarios } = useContext(AppContext);
+
   const [showCreate, setShowCreate] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
 
-  // --- ESTADOS DE EDICIÓN (NUEVOS) ---
+  // --- ESTADO LOCAL PARA EL SKELETON ---
+  const [cargandoDatos, setCargandoDatos] = useState(true);
+
   const [editingUser, setEditingUser] = useState(null);
   const [editMode, setEditMode] = useState(null);
   const [editValue, setEditValue] = useState("");
 
-  // --- ESTADOS DE FILTRADO Y BUSQUEDA ---
   const [search, setSearch] = useState("");
   const [selectedRoles, setSelectedRoles] = useState([]);
-  const [sortBy, setSortBy] = useState("name-asc"); // "name-asc", "name-desc", "role"
+  const [sortBy, setSortBy] = useState("name-asc");
 
   const [form, setForm] = useState({ nombre: "", email: "", rol: "almacen" });
 
+  // --- EFECTO DE CARGA ---
   useEffect(() => {
-    loadUsuarios();
+    const hacerCarga = async () => {
+      setCargandoDatos(true);
+      try {
+        await loadUsuarios();
+      } catch (error) {
+        console.error("Error cargando usuarios", error);
+      } finally {
+        setCargandoDatos(false);
+      }
+    };
+
+    hacerCarga();
   }, [loadUsuarios]);
 
-  // --- LÓGICA DE PROCESAMIENTO DE DATOS ---
   const processedUsers = useMemo(() => {
     let result = [...usuarios];
 
@@ -203,12 +234,11 @@ export default function UsuariosView() {
     }
   };
 
-  // --- NUEVAS FUNCIONES DE EDICIÓN ---
   const handleAction = async (type, user) => {
     if (type === "delete") {
       if (window.confirm(`¿Seguro que quieres eliminar a ${user.nombre}?`)) {
         try {
-          await api.deleteUsuario(user.id); // Esta la conectaremos luego
+          await api.deleteUsuario(user.id);
           showToast("Usuario eliminado");
           loadUsuarios();
         } catch (e) {
@@ -243,27 +273,12 @@ export default function UsuariosView() {
   };
 
   return (
-    <div
-      style={{
-        padding: "40px 40px 80px 40px",
-        maxWidth: 1400,
-        margin: "0 auto",
-      }}
-    >
+    <div className="view-wrapper">
       {/* HEADER PRINCIPAL */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 30,
-        }}
-      >
+      <div className="view-header">
         <div>
-          <h1 style={{ fontSize: 32, fontWeight: 700, color: "var(--text-1)" }}>
-            Usuarios
-          </h1>
-          <p style={{ color: "var(--text-3)", fontSize: 15 }}>
+          <h1 className="view-title">Usuarios</h1>
+          <p className="view-subtitle">
             Gestión de accesos y permisos del equipo
           </p>
         </div>
@@ -273,36 +288,10 @@ export default function UsuariosView() {
       </div>
 
       {/* BARRA DE HERRAMIENTAS */}
-      <div
-        style={{
-          background: "var(--bg-2)",
-          padding: "20px",
-          borderRadius: "var(--r3)",
-          border: "1px solid var(--border-1)",
-          marginBottom: 30,
-          display: "flex",
-          flexDirection: "column",
-          gap: 20,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            gap: 15,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 280, position: "relative" }}>
-            <div
-              style={{
-                position: "absolute",
-                left: 12,
-                top: "50%",
-                transform: "translateY(-50%)",
-                opacity: 0.5,
-              }}
-            >
+      <div className="toolbar">
+        <div className="toolbar-top">
+          <div className="search-wrapper">
+            <div className="search-icon">
               <SVG name="search" size={18} />
             </div>
             <input
@@ -314,7 +303,7 @@ export default function UsuariosView() {
             />
           </div>
 
-          <div style={{ minWidth: 200 }}>
+          <div className="sort-wrapper">
             <Select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
@@ -327,26 +316,8 @@ export default function UsuariosView() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-            borderTop: "1px solid var(--border-1)",
-            paddingTop: 15,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "var(--text-4)",
-              marginRight: 10,
-            }}
-          >
-            FILTRAR POR:
-          </span>
+        <div className="toolbar-bottom">
+          <span className="filter-label">FILTRAR POR:</span>
           {Object.entries(ROLE_META).map(([key, meta]) => (
             <button
               key={key}
@@ -367,103 +338,47 @@ export default function UsuariosView() {
       </div>
 
       {/* GRID DE USUARIOS */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-          gap: 20,
-        }}
-      >
-        {processedUsers.map((u, i) => {
-          const meta = ROLE_META[u.rol];
-          return (
-            <div
-              key={u.id}
-              className="user-card"
-              style={{
-                background: "var(--bg-2)",
-                border: "1px solid var(--border-1)",
-                borderRadius: "var(--r3)",
-                padding: 24,
-                position: "relative",
-                zIndex: activeMenuId === u.id ? 9999 : 1,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                }}
-              >
-                <div style={{ display: "flex", gap: 16 }}>
-                  <div
-                    style={{
-                      width: 52,
-                      height: 52,
-                      borderRadius: "var(--r2)",
-                      background: meta.color + "15",
-                      border: `1px solid ${meta.color}30`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <SVG name="user" size={24} color={meta.color} />
-                  </div>
-                  <div>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 17,
-                        color: "var(--text-1)",
-                      }}
-                    >
-                      {u.nombre}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: "var(--text-3)",
-                        marginTop: 2,
-                      }}
-                    >
-                      {u.email}
-                    </div>
-                  </div>
-                </div>
-                <UserActions
-                  u={u}
-                  isSelf={u.id === session?.user?.id}
-                  onAction={handleAction}
-                  onMenuToggle={(open) => setActiveMenuId(open ? u.id : null)}
-                />
-              </div>
-              <div
-                style={{
-                  marginTop: 24,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <Badge color={meta.color}>{meta.label}</Badge>
-                <div style={{ fontSize: 12, color: "var(--text-4)" }}>
-                  {formatDate(u.created_at)}
-                </div>
-              </div>
-            </div>
-          );
-        })}
+      <div className="users-grid">
+        {cargandoDatos ? (
+          // Pasamos el index al skeleton para la animación en cascada
+          Array.from({ length: 9 }).map((_, index) => (
+            <UserCardSkeleton key={index} index={index} />
+          ))
+        ) : processedUsers.length > 0 ? (
+          // Pasamos el index a la tarjeta real
+          processedUsers.map((u, index) => (
+            <UserCard
+              key={`${u.id}-${selectedRoles.join("-")}`}
+              user={u}
+              index={index}
+              activeMenuId={activeMenuId}
+              isSelf={u.id === session?.user?.id}
+              onAction={handleAction}
+              onMenuToggle={(open) => setActiveMenuId(open ? u.id : null)}
+            />
+          ))
+        ) : (
+          // Mensaje de estado vacío corregido visualmente
+          <div
+            style={{
+              gridColumn: "1 / -1",
+              textAlign: "center",
+              color: "var(--text-3)",
+              padding: "40px 0",
+            }}
+          >
+            No se encontraron usuarios.
+          </div>
+        )}
       </div>
 
-      {/* MODAL CREAR (Tuyo original) */}
+      {/* MODAL CREAR */}
       <Modal
         open={showCreate}
         onClose={() => setShowCreate(false)}
         title="Nuevo Usuario"
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div className="modal-content">
           <Input
             label="NOMBRE"
             placeholder="Nombre completo"
@@ -477,17 +392,7 @@ export default function UsuariosView() {
             onChange={(e) => setForm({ ...form, email: e.target.value })}
           />
           <div className="custom-select-wrapper">
-            <label
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: "var(--text-3)",
-                marginBottom: 8,
-                display: "block",
-              }}
-            >
-              ROL DE ACCESO
-            </label>
+            <label className="modal-label">ROL DE ACCESO</label>
             <Select
               value={form.rol}
               onChange={(e) => setForm({ ...form, rol: e.target.value })}
@@ -497,14 +402,7 @@ export default function UsuariosView() {
               }))}
             />
           </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 12,
-              marginTop: 10,
-            }}
-          >
+          <div className="modal-actions">
             <Btn variant="secondary" onClick={() => setShowCreate(false)}>
               Cancelar
             </Btn>
@@ -515,7 +413,7 @@ export default function UsuariosView() {
         </div>
       </Modal>
 
-      {/* MODAL EDITAR DINÁMICO (Nuevo) */}
+      {/* MODAL EDITAR DINÁMICO */}
       <Modal
         open={!!editingUser}
         onClose={() => setEditingUser(null)}
@@ -527,20 +425,10 @@ export default function UsuariosView() {
               : "Cambiar Rol"
         }
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div className="modal-content">
           {editMode === "edit-role" ? (
             <div className="custom-select-wrapper">
-              <label
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "var(--text-3)",
-                  marginBottom: 8,
-                  display: "block",
-                }}
-              >
-                NUEVO ROL
-              </label>
+              <label className="modal-label">NUEVO ROL</label>
               <Select
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
@@ -560,14 +448,7 @@ export default function UsuariosView() {
             />
           )}
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 12,
-              marginTop: 10,
-            }}
-          >
+          <div className="modal-actions">
             <Btn variant="secondary" onClick={() => setEditingUser(null)}>
               Cancelar
             </Btn>
@@ -577,85 +458,6 @@ export default function UsuariosView() {
           </div>
         </div>
       </Modal>
-
-      <style jsx global>{`
-        .user-card {
-          transition: all 0.2s ease;
-        }
-        .user-card:hover {
-          border-color: var(--border-3);
-          transform: translateY(-4px);
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-        }
-        .menu-item:hover {
-          background: var(--bg-4) !important;
-          color: var(--text-1) !important;
-        }
-        .custom-search-input {
-          width: 100%;
-          background: var(--bg-3);
-          border: 1px solid var(--border-2);
-          padding: 12px 12px 12px 40px;
-          border-radius: var(--r2);
-          color: var(--text-1);
-          font-size: 14px;
-          outline: none;
-          transition: border 0.2s;
-        }
-        .custom-search-input:focus {
-          border-color: var(--accent);
-        }
-        .filter-pill {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 6px 14px;
-          border-radius: 100px;
-          background: var(--bg-3);
-          border: 1px solid var(--border-2);
-          color: var(--text-2);
-          font-size: 12px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: 0.2s;
-        }
-        .filter-pill.active {
-          background: var(--pill-color);
-          border-color: var(--pill-color);
-          color: white;
-        }
-        .filter-pill .dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--pill-color);
-        }
-        .filter-pill.active .dot {
-          background: white;
-        }
-        .clear-btn {
-          background: none;
-          border: none;
-          color: var(--danger);
-          font-size: 11px;
-          cursor: pointer;
-          font-weight: 600;
-          text-transform: uppercase;
-        }
-        .btn-dots {
-          background: none;
-          border: none;
-          cursor: pointer;
-          padding: 6px;
-          border-radius: var(--r1);
-          color: var(--text-3);
-          display: flex;
-        }
-        .btn-dots:hover {
-          background: var(--bg-4);
-          color: var(--text-1);
-        }
-      `}</style>
     </div>
   );
 }
