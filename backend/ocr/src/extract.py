@@ -2,39 +2,330 @@ import re
 from typing import List, Dict, Optional
 
 
-def extract_albaran_data(text: str, ocr_data_list: Optional[List[Dict]] = None) -> Dict:
-    """
-    Extrae productos y cantidades de un albarán de lonja
-    
-    Args:
-        text: Texto extraído por OCR
-    
-    Returns:
-        Dict con productos y sus cantidades
-    """
+
+# ============================================================
+#  FUNCIÓN PRINCIPAL — DETECTA TIPO DE DOCUMENTO Y EXTRAE
+# ============================================================
+
+def extract_albaran_data(
+    text: str,
+    ocr_data_list: Optional[List[Dict]] = None,
+    doc_type: Optional[str] = None
+) -> Dict:
+
+    if doc_type is None:
+        doc_type = _detect_doc_type(text)
+
+    # -----------------------------
+    # PACKING LIST INGLÉS
+    # -----------------------------
+    if doc_type == 'ingles':
+        productos = extract_english_products(text)
+        total_weight = extract_english_total(text)
+        return {
+            'doc_type': doc_type,
+            'total_productos': len(productos),
+            'productos': productos,
+            'total_weight': total_weight
+        }
+
+    # -----------------------------
+    # ALBARÁN ESPAÑOL COMERCIAL
+    # -----------------------------
+    if doc_type == 'español_comercial':
+        productos = extract_spanish_commercial_products(text)
+        return {
+            'doc_type': doc_type,
+            'total_productos': len(productos),
+            'productos': productos
+        }
+
+    # -----------------------------
+    # ALBARÁN PORTUGUÉS (LONJA)
+    # -----------------------------
     if ocr_data_list:
         productos = []
         for ocr_data in ocr_data_list:
             productos.extend(extract_productos_from_ocr_data(ocr_data))
     else:
         productos = extract_productos(text)
-    
+
     return {
+        'doc_type': doc_type,
         'total_productos': len(productos),
         'productos': productos
     }
 
 
+# ============================================================
+#  DETECCIÓN DE TIPO DE DOCUMENTO
+# ============================================================
+
+def _detect_doc_type(text: str) -> str:
+    text_up = text.upper()
+
+    # PACKING LIST INGLÉS
+    english_markers = [
+        'PACKING LIST', 'DESCRIPTION OF GOODS',
+        'WITHOUT GLAZE', 'WITH GLAZE', 'CTNS'
+    ]
+    if any(marker in text_up for marker in english_markers):
+        return 'ingles'
+
+    # ALBARÁN ESPAÑOL COMERCIAL
+    six_digit_lines = re.findall(r'^\d{6}\s+[A-Z]', text_up, re.MULTILINE)
+    if len(six_digit_lines) >= 2:
+        return 'español_comercial'
+
+    # DEFAULT → LONJA PORTUGUESA
+    return 'portugues'
+
+
+# ============================================================
+#  EXTRACTOR ESPAÑOL COMERCIAL
+# ============================================================
+
+def extract_spanish_commercial_products(text: str) -> List[Dict]:
+    lines = text.split('\n')
+    products = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        prod_match = re.match(r'^(\d{6})\s+(.+)', line)
+        if not prod_match:
+            continue
+
+        codigo = prod_match.group(1)
+        rest = prod_match.group(2).strip()
+
+        if 'DESCRIPCI' in rest.upper() or 'TOTAL' in rest.upper():
+            continue
+
+        iva_match = re.search(r'(\d+,\d{2})\s+(\d+,\d{2}|\d+)\s+\b(4|10|21)\b', rest)
+        if iva_match:
+            cantidad_str = iva_match.group(1)
+            precio_raw = iva_match.group(2)
+
+            if ',' in precio_raw:
+                precio = float(precio_raw.replace(',', '.'))
+            else:
+                precio = int(precio_raw) / 100.0
+
+            cantidad = float(cantidad_str.replace(',', '.'))
+        else:
+            price_numbers = re.findall(r'(?<![,\d])\d+,\d{2}(?!\d)', rest)
+            if len(price_numbers) < 2:
+                continue
+            cantidad = float(price_numbers[0].replace(',', '.'))
+            precio = float(price_numbers[1].replace(',', '.'))
+            cantidad_str = price_numbers[0]
+
+        first_pos = rest.find(cantidad_str)
+        desc_raw = rest[:first_pos].strip()
+        desc_raw = re.sub(r'\s+\d+\s*$', '', desc_raw).strip()
+        descripcion = re.sub(r'\s+', ' ', desc_raw).strip()
+
+        products.append({
+            'lote': codigo,
+            'cajas': 0,
+            'especie': descripcion,
+            'peso_kg': cantidad,
+            'linea_original': line,
+            'nombre': descripcion,
+            'cantidad': cantidad,
+            'precio': precio
+        })
+
+    return products
+
+
+# ============================================================
+#  EXTRACTOR PACKING LIST INGLÉS
+# ============================================================
+
+def extract_english_products(text: str) -> List[Dict]:
+    text_up = text.upper()
+
+    for token in [
+        'IQF LIGHT SALTED PACIFIC COD',
+        'IQF LIGHT SALTED SAITHE',
+        'FROZEN GIGAS SQUID TUBE',
+        'IQF GIGAS SQUID RING'
+    ]:
+        text_up = text_up.replace(' ' + token, '\n' + token)
+
+    lines = [line.strip() for line in text_up.split('\n') if line.strip()]
+    products = []
+    i = 0
+
+    while i < len(lines):
+        line_up = lines[i].upper()
+
+        if _is_english_product_start(line_up):
+            block = [lines[i]]
+            i += 1
+
+            while i < len(lines):
+                next_up = lines[i].upper()
+                if _is_english_product_start(next_up) or next_up.startswith('TOTAL'):
+                    break
+                block.append(lines[i])
+                i += 1
+
+            product = _parse_english_product_block(block)
+            if product:
+                products.append(product)
+            continue
+
+        i += 1
+
+    return products
+
+
+def _is_english_product_start(line_up: str) -> bool:
+    if 'PACKING:' in line_up or 'SIZE:' in line_up:
+        return False
+    tokens = ['PACIFIC COD', 'SAITHE', 'SQUID TUBE', 'SQUID RING']
+    return any(t in line_up for t in tokens)
+
+
+def _parse_english_product_block(block: List[str]) -> Optional[Dict]:
+    title = block[0].strip()
+    combined = ' '.join(block).upper()
+
+    sci_match = re.search(r'\(([A-Z\s]{5,})\)', combined)
+    scientific_name = sci_match.group(1).strip() if sci_match else _fallback_scientific_name(title)
+
+    packing = ''
+    packing_qty = ''
+    for line in block:
+        p_match = re.search(r'PACKING\s*:\s*(.+)$', line, re.IGNORECASE)
+        if p_match:
+            packing = p_match.group(1).strip()
+            packing_qty = _extract_packing_qty(packing)
+            break
+
+    ctns_lines_with_glaze = []
+    all_kgs_values = []
+    ctns = 0
+
+    for line in block:
+        line_up = line.upper()
+        has_ctns = 'CTNS' in line_up
+        has_kgs = 'KGS' in line_up
+
+        if has_ctns:
+            ctns_match = re.search(r'(\d+)\s*CTNS', line_up)
+            if ctns_match:
+                ctns = max(ctns, int(ctns_match.group(1)))
+
+        if has_ctns and has_kgs:
+            kgs_tokens = re.findall(r'([A-Z0-9][A-Z0-9\.,]*)\s*KGS', line_up)
+            kgs_values_line = []
+
+            for token in kgs_tokens:
+                parsed = _parse_ocr_float_token(token)
+                if parsed is not None:
+                    kgs_values_line.append(parsed)
+                    all_kgs_values.append(parsed)
+
+            if kgs_values_line:
+                ctns_lines_with_glaze.append(kgs_values_line[-1])
+
+    if ctns_lines_with_glaze:
+        peso_with_glaze = ctns_lines_with_glaze[-1]
+    elif all_kgs_values:
+        peso_with_glaze = all_kgs_values[-1]
+    else:
+        peso_with_glaze = None
+
+    return {
+        'lote': '',
+        'cajas': ctns,
+        'especie': scientific_name,
+        'scientific_name': scientific_name,
+        'peso_kg': peso_with_glaze,
+        'packing': packing,
+        'packing_qty': packing_qty,
+        'linea_original': title
+    }
+
+
+def _fallback_scientific_name(title: str) -> str:
+    title_up = title.upper()
+    if 'SQUID TUBE' in title_up:
+        return 'GIGAS SQUID TUBE'
+    if 'SQUID RING' in title_up:
+        return 'GIGAS SQUID RING'
+    return re.sub(r'\s+', ' ', title).strip()
+
+
+def _extract_packing_qty(packing_text: str) -> str:
+    normalized = packing_text.upper()
+    normalized = re.sub(r'\bI\s*KG\b', '1KG', normalized)
+    normalized = re.sub(r'\bIKG\b', '1KG', normalized)
+    normalized = re.sub(r'\b1I1\s*KG\b', '11KG', normalized)
+
+    match = re.search(r'(\d+\s*X\s*\d+\s*KG|\d+\s*KG)', normalized)
+    return re.sub(r'\s+', ' ', match.group(1)).strip() if match else ''
+
+
+def extract_english_total(text: str) -> Optional[float]:
+    text_up = text.upper()
+    lines = text_up.split('\n')
+
+    for line in lines:
+        if 'TOTAL' in line and ('WITH GLAZE' in line or 'WITHGLAZE' in line or 'W/GLAZE' in line):
+            kgs_tokens = re.findall(r'([A-Z0-9][A-Z0-9\.,]*)\s*KGS', line)
+            for token in kgs_tokens:
+                parsed = _parse_ocr_float_token(token)
+                if parsed is not None:
+                    return parsed
+
+    for line in lines:
+        if 'TOTAL' in line and 'KGS' in line:
+            kgs_tokens = re.findall(r'([A-Z0-9][A-Z0-9\.,]*)\s*KGS', line)
+            parsed_values = [v for v in (_parse_ocr_float_token(t) for t in kgs_tokens) if v is not None]
+
+            if len(parsed_values) >= 3:
+                return parsed_values[-2]
+            if parsed_values:
+                return parsed_values[-1]
+
+    return None
+
+
+def _parse_ocr_float_token(token: str) -> Optional[float]:
+    t = token.upper()
+    replacements = {'O': '0', 'I': '1', 'L': '1', 'S': '5', 'B': '8', 'Z': '2'}
+    normalized = ''.join(replacements.get(ch, ch) for ch in t)
+    normalized = re.sub(r'[^0-9\.,]', '', normalized)
+
+    if not normalized:
+        return None
+
+    if normalized.count('.') + normalized.count(',') > 1:
+        last_sep = max(normalized.rfind('.'), normalized.rfind(','))
+        integer = re.sub(r'[^0-9]', '', normalized[:last_sep])
+        decimal = re.sub(r'[^0-9]', '', normalized[last_sep + 1:])
+        normalized = f"{integer}.{decimal}" if decimal else integer
+    else:
+        normalized = normalized.replace(',', '.')
+
+    try:
+        return float(normalized)
+    except:
+        return None
+
+
+# ============================================================
+#  EXTRACTOR PORTUGUÉS (LONJA) — ORIGINAL COMPLETO
+# ============================================================
+
 def extract_productos_from_ocr_data(ocr_data: Dict) -> List[Dict]:
-    """
-    Extrae productos usando datos OCR con coordenadas para elegir el peso correcto.
-
-    Args:
-        ocr_data: Dict con salida de pytesseract.image_to_data
-
-    Returns:
-        Lista de diccionarios con informacion de productos
-    """
     productos = []
     lines = _build_lines_from_ocr_data(ocr_data)
     peso_x_header = _find_column_x(lines, [r'^peso$'])
@@ -75,12 +366,95 @@ def extract_productos_from_ocr_data(ocr_data: Dict) -> List[Dict]:
             'cajas': int(cajas),
             'especie': especie,
             'peso_kg': float(peso) if peso else None,
-            'precio': float(precio) if precio else None, #########################################
+            'precio': float(precio) if precio else None,
             'linea_original': line_text.strip()
         }
         productos.append(producto)
 
     return productos
+
+
+def extract_productos(text: str) -> List[Dict]:
+    productos = []
+    lines = text.split('\n')
+
+    for line in lines:
+        match = re.match(r'^\s*(\d{3,5})\s+(\d+)\s+([A-Z0-9][A-Z0-9\-\s/]+)', line, re.IGNORECASE)
+
+        if match:
+            lote = match.group(1)
+            cajas = match.group(2)
+            especie_raw = match.group(3).strip()
+            especie = clean_especie_name(especie_raw, line)
+
+            peso_matches = re.findall(r'(\d+[,\.]\d+)', line)
+            peso = None
+            if peso_matches:
+                peso_one_decimal = [p for p in peso_matches if re.match(r'^\d+[,\.]\d$', p)]
+                if peso_one_decimal:
+                    peso = peso_one_decimal[0].replace(',', '.')
+                else:
+                    peso = peso_matches[-1].replace(',', '.')
+
+            precio, val = _select_price_and_value_from_text(line)
+            peso = _reconcile_weight(peso, precio, val)
+
+            cajas_match = re.search(r'(\d+)\s*(?:Cxs|cajas|Cxa)', line, re.IGNORECASE)
+            if cajas_match:
+                cajas = cajas_match.group(1)
+
+            producto = {
+                'lote': lote,
+                'cajas': int(cajas),
+                'especie': especie,
+                'peso_kg': float(peso) if peso else None,
+                'precio': float(precio) if precio else None,
+                'linea_original': line.strip()
+            }
+
+            productos.append(producto)
+
+    return productos
+
+
+# ============================================================
+#  FUNCIONES AUXILIARES DE LONJA (ORIGINALES)
+# ============================================================
+
+def clean_especie_name(especie_raw: str, full_line: str) -> str:
+    stop_words = [
+        'Esp', 'Cientifica', 'Fao', 'Apres', 'Peso', 'Preco',
+        'Val', 'IVA', 'Parapenaeus', 'Merluccius', 'Trachurus',
+        'Lepidorhombus', 'Micromesistius', 'DPS', 'HKE', 'HOW',
+        'LDB', 'WHB', 'Inte', 'HRE'
+    ]
+
+    words = especie_raw.split()
+    clean_words = []
+
+    for word in words:
+        if any(stop in word for stop in stop_words):
+            break
+        clean_words.append(word)
+
+    especie_clean = ' '.join(clean_words).strip()
+    especie_clean = re.sub(r'[^\w\s\-/]+$', '', especie_clean)
+
+    return especie_clean if especie_clean else especie_raw
+
+
+def extract_totales(text: str) -> Dict:
+    totales = {}
+
+    quilos_match = re.search(r'Total\s+Quilos[.:\s]+(\d+[,\.]\d+)', text, re.IGNORECASE)
+    if quilos_match:
+        totales['total_kg'] = float(quilos_match.group(1).replace(',', '.'))
+
+    cajas_match = re.search(r'Numero\s+Cxs[/Cbz/Dornas]*[.:\s]+(\d+)', text, re.IGNORECASE)
+    if cajas_match:
+        totales['total_cajas'] = int(cajas_match.group(1))
+
+    return totales
 
 
 def _build_lines_from_ocr_data(ocr_data: Dict) -> List[Dict]:
@@ -122,6 +496,7 @@ def _build_lines_from_ocr_data(ocr_data: Dict) -> List[Dict]:
         line_entries.append({'text': line_text, 'words': words_sorted})
 
     return line_entries
+
 
 
 def _find_column_x(lines: List[Dict], patterns: List[str]) -> Optional[float]:
@@ -308,136 +683,3 @@ def _reconcile_weight(
 
     return peso
 
-
-def extract_productos(text: str) -> List[Dict]:
-    """
-    Extrae la lista de productos con sus cantidades del texto OCR
-    
-    Busca patrones como:
-    - Lote Cxs Especie ... Peso
-    - 1092 1 CARAPAU T1/A ... 7,4
-    - 249 1 GAMBA-BRANC-MIU ... 9,9
-    
-    Args:
-        text: Texto del OCR
-    
-    Returns:
-        Lista de diccionarios con información de productos
-    """
-    productos = []
-    
-    # Dividir el texto en líneas
-    lines = text.split('\n')
-    
-    for i, line in enumerate(lines):
-        # Buscar líneas que parezcan productos
-        # Patrón: número (lote) + número (cajas) + nombre especie + ... + peso
-        
-        # Patrón flexible para capturar diferentes formatos
-        # Ejemplo: "1092 1 CARAPAU T1/A ... 7,4"
-        # Ejemplo: "249 1 GAMBA-BRANC-MIU Parapenaeus longiros DPS Inte 9,9"
-        
-        # Buscar líneas que empiecen con número de lote (3-4 dígitos)
-        match = re.match(r'^\s*(\d{3,5})\s+(\d+)\s+([A-Z0-9][A-Z0-9\-\s/]+)', line, re.IGNORECASE)
-        
-        if match:
-            lote = match.group(1)
-            cajas = match.group(2)
-            especie_raw = match.group(3).strip()
-            
-            # Limpiar el nombre de la especie
-            # Tomar solo hasta encontrar palabras que no sean parte del nombre
-            especie = clean_especie_name(especie_raw, line)
-            
-            # Buscar peso en la misma línea (números con coma o punto decimal)
-            # Preferir formatos de kg con un decimal (p. ej. 7,4) sobre valores monetarios (11,47)
-            peso_matches = re.findall(r'(\d+[,\.]\d+)', line)
-            peso = None
-            if peso_matches:
-                peso_one_decimal = [p for p in peso_matches if re.match(r'^\d+[,\.]\d$', p)]
-                if peso_one_decimal:
-                    peso = peso_one_decimal[0].replace(',', '.')
-                else:
-                    peso = peso_matches[-1].replace(',', '.')
-
-            precio, val = _select_price_and_value_from_text(line)
-            peso = _reconcile_weight(peso, precio, val)
-            
-            # Buscar cantidad de cajas adicionales si hay "Cxs" o similar
-            cajas_match = re.search(r'(\d+)\s*(?:Cxs|cajas|Cxa)', line, re.IGNORECASE)
-            if cajas_match:
-                cajas = cajas_match.group(1)
-            
-            producto = {
-                'lote': lote,
-                'cajas': int(cajas),
-                'especie': especie,
-                'peso_kg': float(peso) if peso else None,
-                'precio': float(precio) if precio else None, #########################################
-                'linea_original': line.strip()
-            }
-            
-            productos.append(producto)
-    
-    return productos
-
-
-def clean_especie_name(especie_raw: str, full_line: str) -> str:
-    """
-    Limpia el nombre de la especie eliminando información extra
-    
-    Args:
-        especie_raw: Nombre crudo de la especie
-        full_line: Línea completa para contexto
-    
-    Returns:
-        Nombre limpio de la especie
-    """
-    # Patrones comunes que indican fin del nombre de especie
-    stop_words = [
-        'Esp', 'Cientifica', 'Fao', 'Apres', 'Peso', 'Preco',
-        'Val', 'IVA', 'Parapenaeus', 'Merluccius', 'Trachurus',
-        'Lepidorhombus', 'Micromesistius', 'DPS', 'HKE', 'HOW',
-        'LDB', 'WHB', 'Inte', 'HRE'
-    ]
-    
-    words = especie_raw.split()
-    clean_words = []
-    
-    for word in words:
-        # Parar si encontramos una palabra que indica datos científicos
-        if any(stop in word for stop in stop_words):
-            break
-        clean_words.append(word)
-    
-    especie_clean = ' '.join(clean_words).strip()
-    
-    # Remover caracteres finales no deseados
-    especie_clean = re.sub(r'[^\w\s\-/]+$', '', especie_clean)
-    
-    return especie_clean if especie_clean else especie_raw
-
-
-def extract_totales(text: str) -> Dict:
-    """
-    Extrae información de totales del albarán (opcional, por si lo necesitas después)
-    
-    Args:
-        text: Texto del OCR
-    
-    Returns:
-        Dict con totales
-    """
-    totales = {}
-    
-    # Buscar total de quilos
-    quilos_match = re.search(r'Total\s+Quilos[.:\s]+(\d+[,\.]\d+)', text, re.IGNORECASE)
-    if quilos_match:
-        totales['total_kg'] = float(quilos_match.group(1).replace(',', '.'))
-    
-    # Buscar número total de cajas
-    cajas_match = re.search(r'Numero\s+Cxs[/Cbz/Dornas]*[.:\s]+(\d+)', text, re.IGNORECASE)
-    if cajas_match:
-        totales['total_cajas'] = int(cajas_match.group(1))
-    
-    return totales

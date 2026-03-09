@@ -2,6 +2,69 @@ import pytesseract
 from PIL import Image, ImageOps
 
 
+# ============================================================
+#  DETECCIÓN DE IDIOMA
+# ============================================================
+
+
+def detect_language_from_image(image_path):
+    """
+    Detecta el idioma principal de una imagen usando Tesseract y análisis de palabras clave
+    
+    Args:
+        image_path: Ruta a la imagen
+    
+    Returns:
+        String con el código de idioma detectado (ej: 'spa', 'eng', 'fra', 'deu', 'por', etc.)
+    """
+    image = Image.open(image_path)
+    image = ImageOps.exif_transpose(image)
+    
+    # Primero, hacer OCR con inglés para obtener el texto
+    try:
+        config = r'--oem 3 --psm 6'
+        text = pytesseract.image_to_string(image, lang='eng+spa+por', config=config).lower()
+    except:
+        return 'eng'  # Default a inglés si falla
+    
+    # Palabras clave por idioma (una selección pequeña pero confiable)
+    keywords = {
+        'eng': ['invoice', 'packing', 'weight', 'quantity', 'total', 'date', 'goods', 'description', 'price', 'receipt'],
+        'spa': ['factura', 'albarán', 'cantidad', 'peso', 'precio', 'total', 'fecha', 'producto', 'concepto', 'descripción'],
+        'por': ['nota', 'quantidade', 'peso', 'preço', 'data', 'total', 'descrição', 'fatura', 'recibo'],
+        'fra': ['facture', 'quantité', 'poids', 'prix', 'date', 'total', 'description', 'montant', 'article'],
+        'deu': ['rechnung', 'gewicht', 'menge', 'preis', 'datum', 'summe', 'artikel', 'beschreibung', 'gesamtbetrag'],
+        'ita': ['fattura', 'quantità', 'peso', 'prezzo', 'data', 'totale', 'articolo', 'descrizione', 'importo'],
+    }
+    
+    # Contar coincidencias de palabras clave
+    scores = {lang: 0 for lang in keywords}
+    
+    for lang, words_list in keywords.items():
+        for keyword in words_list:
+            if keyword in text:
+                scores[lang] += 1
+    
+    # Si encuentra palabras clave, usar el idioma con más coincidencias
+    max_score = max(scores.values())
+    if max_score > 0:
+        detected_lang = max(scores, key=scores.get)
+        return detected_lang
+    
+    # Fallback: usar la puntuación de Tesseract OSD si no hay palabras clave
+    try:
+        osd = pytesseract.image_to_osd(image)
+        for line in osd.split('\n'):
+            if line.startswith('Script:'):
+                return 'eng'  # Default a inglés
+    except:
+        pass
+    
+    return 'eng'  # Default a inglés
+
+
+
+
 def process_image_with_ocr(image_path, lang='spa+por'):
     """
     Procesa una imagen con Tesseract OCR
