@@ -3,6 +3,7 @@ from datetime import datetime
 import uuid
 import tempfile
 import shutil
+import base64
 from pathlib import Path
 
 # OCR imports (usa el paquete local `ocr/src`)
@@ -11,6 +12,11 @@ from ocr.src.ocr import process_image_with_ocr, get_ocr_data
 from ocr.src.extract import extract_albaran_data
 from openpyxl import Workbook
 from io import BytesIO
+
+# PDF manipulation for signature embedding
+from pypdf import PdfReader, PdfWriter
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.lib.utils import ImageReader
 
 class PedidosService:
     
@@ -405,6 +411,144 @@ class PedidosService:
 
         return response.data
     
+    # =========================
+    # FIRMAR PEDIDO (incrustar firma en PDF)
+    # =========================
+
+    def firmar_pedido(self, pedido_id, firma_base64):
+        """
+        Recibe la firma del cliente como imagen base64,
+        la incrusta al pie del PDF original del albaran
+        y sube el PDF firmado reemplazando al original.
+        Tambien avanza el estado del pedido a 3 (Oficina).
+        """
+
+        # 1. Obtener pedido y verificar que tiene PDF
+        pedido = (
+            supabase_admin
+            .table("pedidos")
+            .select("*")
+            .eq("id", pedido_id)
+            .maybe_single()
+            .execute()
+        )
+
+        if not pedido.data:
+            return {"error": "Pedido no encontrado"}
+
+        if int(pedido.data["estado"]) != 2:
+            return {"error": "El pedido no esta en estado Transportista"}
+
+        nombre_archivo = pedido.data.get("pdf_url")
+        if not nombre_archivo:
+            return {"error": "Este pedido no tiene PDF"}
+
+        # 2. Descargar PDF original de Supabase Storage
+        try:
+            pdf_bytes = supabase_admin.storage.from_(self.BUCKET).download(nombre_archivo)
+        except Exception as e:
+            print(f"[FIRMA][ERROR] Error descargando PDF: {e}")
+            return {"error": "Error descargando PDF original"}
+
+        # 3. Decodificar la imagen de firma (base64 data URL → bytes)
+        try:
+            # Remove data URL prefix if present: "data:image/png;base64,..."
+            if "," in firma_base64:
+                firma_base64 = firma_base64.split(",", 1)[1]
+            firma_bytes = base64.b64decode(firma_base64)
+        except Exception as e:
+            print(f"[FIRMA][ERROR] Error decodificando firma: {e}")
+            return {"error": "Firma invalida"}
+
+        # 4. Leer PDF original y obtener dimensiones de la primera pagina
+        try:
+            reader = PdfReader(BytesIO(pdf_bytes))
+            first_page = reader.pages[0]
+            page_width = float(first_page.mediabox.width)
+            page_height = float(first_page.mediabox.height)
+        except Exception as e:
+            print(f"[FIRMA][ERROR] Error leyendo PDF: {e}")
+            return {"error": "Error procesando PDF"}
+
+        # 5. Crear capa overlay con la firma en esquina superior derecha
+        overlay_buffer = BytesIO()
+        c = rl_canvas.Canvas(overlay_buffer, pagesize=(page_width, page_height))
+
+        margin = 20
+        firma_width = 150
+        firma_height = 50
+        firma_x = page_width - firma_width - margin
+        firma_y = page_height - firma_height - margin - 14
+
+        # Texto "Firma del cliente"
+        c.setFont("Helvetica", 7)
+        c.setFillColorRGB(0.4, 0.4, 0.4)
+        c.drawCentredString(firma_x + firma_width / 2, firma_y + firma_height + 4, "Firma del cliente")
+
+        # Imagen de la firma
+        firma_image = ImageReader(BytesIO(firma_bytes))
+        c.drawImage(firma_image, firma_x, firma_y, width=firma_width, height=firma_height, mask='auto')
+
+        # Linea debajo
+        c.setStrokeColorRGB(0.7, 0.7, 0.7)
+        c.setLineWidth(0.5)
+        c.line(firma_x, firma_y - 2, firma_x + firma_width, firma_y - 2)
+
+        # Fecha
+        c.setFont("Helvetica", 5)
+        c.setFillColorRGB(0.5, 0.5, 0.5)
+        fecha_firma = datetime.now().strftime("%d/%m/%Y %H:%M")
+        c.drawCentredString(firma_x + firma_width / 2, firma_y - 10, f"Firmado: {fecha_firma}")
+
+        c.save()
+        overlay_buffer.seek(0)
+
+        # 6. Fusionar overlay con la ultima pagina del PDF original
+        overlay_reader = PdfReader(overlay_buffer)
+        writer = PdfWriter()
+
+        for i, page in enumerate(reader.pages):
+            if i == len(reader.pages) - 1:
+                # Ultima pagina: superponer la firma
+                page.merge_page(overlay_reader.pages[0])
+            writer.add_page(page)
+
+        # 7. Generar PDF firmado
+        signed_buffer = BytesIO()
+        writer.write(signed_buffer)
+        signed_buffer.seek(0)
+        signed_bytes = signed_buffer.read()
+        print(f"[FIRMA] PDF original: {len(pdf_bytes)} bytes, PDF firmado: {len(signed_bytes)} bytes")
+
+        # 8. Subir PDF firmado a Supabase (borrar original y subir nuevo)
+        try:
+            # Eliminar el PDF original primero
+            supabase_admin.storage.from_(self.BUCKET).remove([nombre_archivo])
+            print(f"[FIRMA] PDF original eliminado: {nombre_archivo}")
+
+            # Subir el PDF firmado con el mismo nombre
+            supabase_admin.storage.from_(self.BUCKET).upload(
+                nombre_archivo,
+                signed_bytes,
+                {"content-type": "application/pdf"}
+            )
+            print(f"[FIRMA] PDF firmado subido: {nombre_archivo}")
+        except Exception as e:
+            print(f"[FIRMA][ERROR] Error subiendo PDF firmado: {e}")
+            return {"error": f"Error subiendo PDF firmado: {e}"}
+
+        # 9. Avanzar estado a 3 (Oficina) y marcar como firmado
+        try:
+            supabase_admin.table("pedidos").update({
+                "estado": 3
+            }).eq("id", pedido_id).execute()
+            print(f"[FIRMA] Pedido {pedido_id} avanzado a estado 3 (firmado)")
+        except Exception as e:
+            print(f"[FIRMA][ERROR] Error actualizando pedido: {e}")
+            return {"error": "PDF firmado pero error al actualizar estado"}
+
+        return {"message": "Firma registrada correctamente", "pedido_id": pedido_id}
+
     def exportar_a_excel(self, pedido_id):
         response = supabase_admin.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
         
@@ -415,14 +559,14 @@ class PedidosService:
         wb = Workbook()
         ws = wb.active
         
-        ws.append(["Código", "Nombre", "Cantidad"])
-        
+        ws.append(["Código", "Nombre", "Cantidad", "Precio"])
+
         for producto in productos:
             ws.append([
                 producto['id'],
                 producto['nombre_producto'],
                 producto['cantidad'],
-                producto.get('precio', 0)  #############################################3 Precio no extraído por OCR, se puede actualizar luego
+                producto.get('precio', 0)
             ])
         
         output = BytesIO()

@@ -242,6 +242,44 @@ def obtener_pdf(id):
     return jsonify(resultado), 200
 
 # =========================
+# FIRMAR PEDIDO (transportista recoge firma del cliente)
+# =========================
+
+@pedidos_bp.route('/<uuid:id>/firma', methods=['POST'])
+@requiere_autenticacion
+def firmar_pedido(id):
+    """Recibe firma base64 del cliente y la incrusta en el PDF del pedido"""
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return respuesta_error("Token requerido", 401)
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return respuesta_error("Formato de token invalido", 401)
+
+    payload = verificar_jwt(token)
+    if not payload:
+        return respuesta_error("Token invalido", 401)
+
+    rol_usuario = payload.get("rol")
+    if rol_usuario not in ("transportista", "admin", "oficina"):
+        return respuesta_error("No autorizado para firmar pedidos", 403)
+
+    datos = request.get_json()
+    if not datos or not datos.get("firma"):
+        return respuesta_error("Firma requerida", 400)
+
+    resultado = service.firmar_pedido(str(id), datos["firma"])
+
+    if isinstance(resultado, dict) and "error" in resultado:
+        return respuesta_error(resultado["error"], 400)
+
+    return jsonify(resultado), 200
+
+
+# =========================
 # ELIMINAR PEDIDO
 # =========================
 

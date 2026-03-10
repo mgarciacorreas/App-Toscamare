@@ -188,6 +188,16 @@ export async function getPDFSignedUrl(pedidoId) {
   return data.signedURL || data.signedUrl || data.signed_url || null;
 }
 
+// ── Firma ───────────────────────────────────────────────────
+
+export function firmarPedido(pedidoId, signatureBase64) {
+  return request("/pedidos/" + pedidoId + "/firma", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ firma: signatureBase64 }),
+  });
+}
+
 // ── Productos ────────────────────────────────────────────────
 
 export function fetchProductos(pedidoId) {

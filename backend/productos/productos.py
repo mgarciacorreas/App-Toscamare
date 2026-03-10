@@ -12,6 +12,7 @@ import os
 from flask import request, jsonify, Blueprint
 from supabase import create_client, Client
 from database.supabase_client import supabase
+from database.supabase_client_admin import supabase_admin
 from dotenv import load_dotenv
 from auth.jwt_handler import requiere_autenticacion, requiere_rol
 from utils.error_handler import respuesta_error
@@ -50,8 +51,7 @@ def listar_productos(pedido_id):
     try:
 
         # Ejecutamos la consulta
-        response = supabase.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
-
+        response = supabase_admin.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()
 
         return jsonify(response.data), 200
 

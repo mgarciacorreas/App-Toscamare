@@ -11,6 +11,7 @@ from utils.error_handler import register_error_handlers, respuesta_error
 
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max (firmas + PDFs)
 register_error_handlers(app)
 CORS(app, origins=[Config.FRONTEND_URL])
 

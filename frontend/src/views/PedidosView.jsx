@@ -5,6 +5,7 @@ import { timeAgo } from "@/utils/helpers";
 import { SVG, Btn, Badge, Select, EmptyState } from "@/components/ui";
 import PedidoFormModal from "@/components/pedidos/PedidoFormModal";
 import PedidoDetailModal from "@/components/pedidos/PedidoDetailModal";
+import FirmaModal from "@/components/pedidos/FirmaModal";
 import * as api from "@/utils/api";
 
 export default function PedidosView() {
@@ -17,6 +18,7 @@ export default function PedidosView() {
   const [confirmId, setConfirmId] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null); // 'advance' | 'rollback' | 'delete'
   const [actionLoading, setActionLoading] = useState(null);
+  const [firmaPedido, setFirmaPedido] = useState(null);
 
   const userRol = session.user.rol;
   const isAdmin = userRol === ROLES.ADMIN;
@@ -123,6 +125,10 @@ export default function PedidosView() {
     if (p.estado_actual <= 0) return false;
     if (isAdmin || isOficina) return true;
     return ESTADOS[p.estado_actual]?.role === userRol;
+  };
+
+  const canSign = (p) => {
+    return p.estado_actual === 2 && (userRol === ROLES.TRANSPORTISTA || isModerator);
   };
 
   const canExport = (p) => {
@@ -427,8 +433,20 @@ export default function PedidosView() {
                           </Btn>
                         )}
 
-                        {/* Advance state button */}
-                        {showAdvanceBtn(p) && (
+                        {/* Sign button for transportista at estado 2 */}
+                        {canSign(p) && (
+                          <Btn
+                            variant="primary"
+                            size="sm"
+                            icon="check"
+                            onClick={() => setFirmaPedido(p)}
+                          >
+                            Firmar entrega
+                          </Btn>
+                        )}
+
+                        {/* Advance state button (hide at estado 2 if canSign, since firma advances automatically) */}
+                        {showAdvanceBtn(p) && !canSign(p) && (
                           <Btn
                             variant="primary"
                             size="sm"
@@ -457,6 +475,11 @@ export default function PedidosView() {
         onClose={() => setDetailPedido(null)}
         pedido={detailPedido}
         onRefresh={loadPedidos}
+      />
+      <FirmaModal
+        open={!!firmaPedido}
+        onClose={() => setFirmaPedido(null)}
+        pedido={firmaPedido}
       />
     </div>
   );
