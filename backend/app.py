@@ -8,6 +8,7 @@ from usuarios.usuarios import usuarios_bp
 from pedidos.pedidos import pedidos_bp
 from productos.productos import productos_bp
 from utils.error_handler import register_error_handlers, respuesta_error
+from ocr.src.ocr import get_ocr_runtime_info
 
 
 app = Flask(__name__)
@@ -22,6 +23,12 @@ app.register_blueprint(productos_bp)
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"}),200
+
+@app.route('/health/ocr', methods=['GET'])
+def health_ocr():
+    info = get_ocr_runtime_info(required_langs=['spa', 'por', 'eng'])
+    status_code = 200 if info.get('tesseract_found') and not info.get('missing_langs') else 500
+    return jsonify(info), status_code
 
 @app.route('/api/login', methods=['GET'])
 def login():
