@@ -11,6 +11,7 @@ from ocr.src.pdf_to_img import convert_pdf_to_images
 from ocr.src.ocr import process_image_with_ocr, get_ocr_data
 from ocr.src.extract import extract_albaran_data
 from openpyxl import Workbook
+from pypdf import PdfReader, PdfWriter
 from io import BytesIO
 import fitz
 class PedidosService:
