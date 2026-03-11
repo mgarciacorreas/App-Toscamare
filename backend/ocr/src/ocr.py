@@ -1,9 +1,11 @@
 import os
+import shutil
 import pytesseract
 from PIL import Image, ImageOps
 
-# Ruta al ejecutable de Tesseract en Windows
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Ruta al ejecutable de Tesseract (compatible Windows y Linux/Docker)
+_tesseract = shutil.which('tesseract') or r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+pytesseract.pytesseract.tesseract_cmd = _tesseract
 
 # Usar tessdata local del proyecto (contiene spa, por, eng, osd)
 os.environ['TESSDATA_PREFIX'] = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tessdata')
