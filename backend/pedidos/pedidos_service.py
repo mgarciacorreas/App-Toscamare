@@ -13,10 +13,7 @@ from ocr.src.extract import extract_albaran_data
 from openpyxl import Workbook
 from io import BytesIO
 
-# PDF manipulation for signature embedding
-from pypdf import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas as rl_canvas
-from reportlab.lib.utils import ImageReader
+import fitz
 
 class PedidosService:
     
@@ -310,7 +307,7 @@ class PedidosService:
         pedido = (
             supabase_admin
             .table("pedidos")
-            .select("pdf_url")
+            .select("pdf_url, pdf_firmado")
             .eq("id", pedido_id)
             .maybe_single()
             .execute()
@@ -319,7 +316,7 @@ class PedidosService:
         if not pedido.data:
             return {"error": "Pedido no encontrado"}
 
-        nombre_archivo = pedido.data["pdf_url"]
+        nombre_archivo = pedido.data.get("pdf_firmado") or pedido.data.get("pdf_url")
 
         if not nombre_archivo:
             return {"error": "Este pedido no tiene PDF"}
@@ -331,6 +328,38 @@ class PedidosService:
         )
 
         return signed_url
+    
+    def obtener_pdf_preview(self, pedido_id):
+        pedido = (
+            supabase_admin
+            .table("pedidos")
+            .select("pdf_url")
+            .eq("id", pedido_id)
+            .maybe_single()
+            .execute()
+        )
+
+        if not pedido.data or not pedido.data.get("pdf_url"):
+            return {"error": "Este pedido no tiene PDF"}
+
+        try:
+            pdf_bytes = supabase_admin.storage.from_(self.BUCKET).download(pedido.data["pdf_url"])
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            if len(doc) == 0:
+                return {"error": "PDF vacío"}
+                
+            page = doc[0]
+            # Si es apaisado, lo mostramos derecho para que coincida con lo que procesa la firma
+            if page.rect.width > page.rect.height:
+                page.set_rotation(page.rotation + 270)
+                
+            # Render a imagen (DPI ~150 para que no sea inmensa ni se vea mal)
+            mat = fitz.Matrix(2.0, 2.0)
+            pix = page.get_pixmap(matrix=mat)
+            return pix.tobytes("png")
+        except Exception as e:
+            print(f"[PREVIEW][ERROR] Error generando preview: {e}")
+            return {"error": "Error procesando el PDF para preview"}
     
 
     
@@ -485,70 +514,40 @@ class PedidosService:
 
         # 4. Leer PDF original
         try:
-            reader = PdfReader(BytesIO(pdf_bytes))
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as e:
             print(f"[FIRMA][ERROR] Error leyendo PDF: {e}")
             return {"error": "Error procesando PDF"}
 
         fecha_firma = datetime.now().strftime("%d/%m/%Y %H:%M")
-        writer = PdfWriter()
+        
+        font = fitz.Font("helv")
+        def center_text(page, text, text_y, firma_x, firma_width, font_size, color):
+            w = font.text_length(text, fontsize=font_size)
+            x_pos = firma_x + (firma_width - w) / 2
+            page.insert_text((x_pos, text_y), text, fontsize=font_size, color=color, fontname="helv")
 
-        # 5. Procesar cada pagina: rotar si horizontal + añadir firma
-        for page in reader.pages:
-            page_width = float(page.mediabox.width)
-            page_height = float(page.mediabox.height)
-
-            # Rotar paginas horizontales a vertical
-            if page_width > page_height:
-                page.rotate(270)
-                page_width, page_height = page_height, page_width
-
-            # Crear overlay de firma para esta pagina
-            overlay_buffer = BytesIO()
-            cv = rl_canvas.Canvas(overlay_buffer, pagesize=(page_width, page_height))
-
-            margin = 20
-            firma_width = 150
-            firma_height = 50
-            firma_x = page_width - firma_width - margin
-            firma_y = page_height - firma_height - margin - 14
-
-            # Texto "Firma del cliente"
-            cv.setFont("Helvetica", 7)
-            cv.setFillColorRGB(0.4, 0.4, 0.4)
-            cv.drawCentredString(firma_x + firma_width / 2, firma_y + firma_height + 4, "Firma del cliente")
-
-            # Imagen de la firma
-            firma_image = ImageReader(BytesIO(firma_bytes))
-            cv.drawImage(firma_image, firma_x, firma_y, width=firma_width, height=firma_height, mask='auto')
-
-            # Linea debajo
-            cv.setStrokeColorRGB(0.7, 0.7, 0.7)
-            cv.setLineWidth(0.5)
-            cv.line(firma_x, firma_y - 2, firma_x + firma_width, firma_y - 2)
-
-            # Fecha
-            cv.setFont("Helvetica", 5)
-            cv.setFillColorRGB(0.5, 0.5, 0.5)
-            cv.drawCentredString(firma_x + firma_width / 2, firma_y - 10, f"Firmado: {fecha_firma}")
-
-            cv.save()
-            overlay_buffer.seek(0)
-
-            # Fusionar firma con la pagina
-            overlay_page = PdfReader(overlay_buffer).pages[0]
-            page.merge_page(overlay_page)
-            writer.add_page(page)
+        # 5. Procesar SOLO la primera pagina para la firma
+        if len(doc) > 0:
+            page = doc[0]
+            rect = page.rect
+            
+            # Igualar la rotacion que aplicamos en el preview (para que la firma cuadre)
+            if rect.width > rect.height:
+                page.set_rotation(page.rotation + 270)
+                rect = page.rect 
+            
+            # La imagen de la firma enviada desde el frontend tiene el mismo aspect ratio 
+            # y coordenadas relativas al documento completo
+            firma_rect = fitz.Rect(0, 0, rect.width, rect.height)
+            page.insert_image(firma_rect, stream=firma_bytes)
 
         # 7. Generar PDF firmado
-        signed_buffer = BytesIO()
-        writer.write(signed_buffer)
-        signed_buffer.seek(0)
-        signed_bytes = signed_buffer.read()
+        signed_bytes = doc.write()
         print(f"[FIRMA] PDF original: {len(pdf_bytes)} bytes, PDF firmado: {len(signed_bytes)} bytes")
 
         # 8. Subir PDF firmado a Supabase con nombre distinto (mantener original)
-        nombre_firmado = nombre_archivo.replace(".pdf", "_firmado.pdf")
+        nombre_firmado = nombre_archivo.replace(".pdf", f"_firmado_{uuid.uuid4().hex[:6]}.pdf")
         try:
             supabase_admin.storage.from_(self.BUCKET).upload(
                 nombre_firmado,
@@ -560,18 +559,17 @@ class PedidosService:
             print(f"[FIRMA][ERROR] Error subiendo PDF firmado: {e}")
             return {"error": f"Error subiendo PDF firmado: {e}"}
 
-        # 9. Avanzar estado a 3 y guardar ruta del PDF firmado
+        # 9. Guardar ruta del PDF firmado sin avanzar estado
         try:
             supabase_admin.table("pedidos").update({
-                "estado": 3,
                 "pdf_firmado": nombre_firmado
             }).eq("id", pedido_id).execute()
-            print(f"[FIRMA] Pedido {pedido_id} avanzado a estado 3, pdf_firmado: {nombre_firmado}")
+            print(f"[FIRMA] Pedido {pedido_id} pdf_firmado actualizado: {nombre_firmado}")
         except Exception as e:
-            print(f"[FIRMA][ERROR] Error actualizando pedido: {e}")
-            return {"error": "PDF firmado pero error al actualizar estado"}
+            print(f"[FIRMA][ERROR] Error actualizando BD: {e}")
+            return {"error": "PDF firmado pero error al actualizar estado en BD"}
 
-        return {"message": "Firma registrada correctamente", "pedido_id": pedido_id}
+        return {"message": "Firma incrustada en el PDF. Revisa el documento.", "pedido_id": pedido_id}
 
     def exportar_a_excel(self, pedido_id):
         response = supabase_admin.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()

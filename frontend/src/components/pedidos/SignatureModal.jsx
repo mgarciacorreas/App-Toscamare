@@ -1,13 +1,36 @@
 import { useState, useRef, useEffect } from "react";
 import { Modal, Btn, SVG } from "@/components/ui";
 import SignatureCanvas from "react-signature-canvas";
+import * as api from "@/utils/api";
 
 export default function SignatureModal({ open, onClose, pedido }) {
   const sigRef = useRef(null);
   const wrapperRef = useRef(null);
   const canvasContainerRef = useRef(null);
+  const lastDataRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [penWidths, setPenWidths] = useState({ min: 2, max: 4 });
+  const [penWidths, setPenWidths] = useState({ min: 0.5, max: 1 });
+  const [bgUrl, setBgUrl] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(true);
+
+  useEffect(() => {
+    if (open && pedido) {
+      lastDataRef.current = localStorage.getItem('firma_' + pedido.id) || null;
+    }
+  }, [open, pedido]);
+
+  // Load PDF background
+  useEffect(() => {
+    if (open && pedido) {
+      setLoadingPdf(true);
+      api.getPDFPreviewUrl(pedido.id)
+        .then(url => setBgUrl(url))
+        .catch(err => console.error("Error loading PDF preview:", err))
+        .finally(() => setLoadingPdf(false));
+    } else {
+      setBgUrl(null);
+    }
+  }, [open, pedido]);
 
   // Handle Fullscreen events syncing with state
   useEffect(() => {
@@ -32,9 +55,9 @@ export default function SignatureModal({ open, onClose, pedido }) {
       const h = parent.offsetHeight;
       if (w === 0 || h === 0) return;
       
-      // Update pen thickness proportionally (assume base width of 350px -> min 2, max 4)
+      // Update pen thickness proportionally
       const scale = w / 350;
-      setPenWidths({ min: Math.max(1, 2 * scale), max: Math.max(2, 4 * scale) });
+      setPenWidths({ min: Math.max(0.2, 0.5 * scale), max: Math.max(0.5, 1 * scale) });
       
       const ratio = Math.max(window.devicePixelRatio || 1, 1);
       const targetW = w * ratio;
@@ -42,7 +65,10 @@ export default function SignatureModal({ open, onClose, pedido }) {
       
       if (canvas.width === targetW && canvas.height === targetH) return;
       
-      const data = sigRef.current.isEmpty() ? null : sigRef.current.toDataURL();
+      const currentData = sigRef.current.isEmpty() ? null : sigRef.current.toDataURL();
+      if (currentData) {
+        lastDataRef.current = currentData;
+      }
       
       canvas.width = targetW;
       canvas.height = targetH;
@@ -51,10 +77,11 @@ export default function SignatureModal({ open, onClose, pedido }) {
       canvas.getContext("2d").scale(ratio, ratio);
       
       sigRef.current.clear();
-      if (data && data !== "data:,") {
+      
+      if (lastDataRef.current && lastDataRef.current !== "data:,") {
         setTimeout(() => {
-          if (sigRef.current) sigRef.current.fromDataURL(data);
-        }, 10);
+          if (sigRef.current) sigRef.current.fromDataURL(lastDataRef.current);
+        }, 30);
       }
     };
 
@@ -64,6 +91,8 @@ export default function SignatureModal({ open, onClose, pedido }) {
     });
     
     if (canvasContainerRef.current) {
+      // Small delay initially to let the img dictate the container size
+      setTimeout(resizeCanvas, 50);
       observer.observe(canvasContainerRef.current);
     }
     
@@ -71,23 +100,12 @@ export default function SignatureModal({ open, onClose, pedido }) {
       clearTimeout(resizeTimer);
       observer.disconnect();
     };
-  }, [open]);
+  }, [open, bgUrl]);
 
-  // Restore signature initially if we have one
-  useEffect(() => {
-    if (open && pedido && sigRef.current) {
-      const saved = localStorage.getItem('firma_' + pedido.id);
-      if (saved) {
-        setTimeout(() => {
-          if (sigRef.current) sigRef.current.fromDataURL(saved);
-        }, 100);
-      } else {
-        sigRef.current.clear();
-      }
-    }
-  }, [open, pedido]);
-
-  const handleClear = () => sigRef.current?.clear();
+  const handleClear = () => {
+    sigRef.current?.clear();
+    lastDataRef.current = null;
+  };
 
   const handleSaveLocal = () => {
     if (!sigRef.current || sigRef.current.isEmpty()) {
@@ -135,7 +153,7 @@ export default function SignatureModal({ open, onClose, pedido }) {
         {!isFullscreen && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
             <p style={{ fontSize: 13, color: "var(--text-3)" }}>
-              Firme en el recuadro inferior.
+              Firme directamente sobre el albarán en la vista previa.
             </p>
             <Btn variant="ghost" size="sm" icon="maximize" onClick={toggleFullscreen} title="Pantalla completa">
               Pantalla completa
@@ -147,31 +165,61 @@ export default function SignatureModal({ open, onClose, pedido }) {
           <div
             ref={canvasContainerRef}
             style={{
-              border: "2px dashed var(--border-2)",
+              position: 'relative',
               borderRadius: "var(--r2)",
-              background: "#fff",
+              background: "var(--bg-2)",
               overflow: 'hidden',
-              width: "100%",
-              aspectRatio: '1 / 1',
               maxHeight: isFullscreen ? 'calc(100vh - 120px)' : '50vh',
-              maxWidth: isFullscreen ? 'calc(100vh - 120px)' : '100%'
+              maxWidth: isFullscreen ? 'calc(100vh - 120px)' : '100%',
+              display: 'inline-block', // shrinkwrap to img
+              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+              border: "1px solid var(--border-2)"
             }}
           >
-            <SignatureCanvas
-              ref={sigRef}
-              penColor="#111"
-              minWidth={penWidths.min}
-              maxWidth={penWidths.max}
-              canvasProps={{
-                className: "sigCanvas",
-                style: { 
-                  width: "100%", 
-                  height: "100%", 
-                  display: "block",
-                  cursor: "crosshair"
-                },
-              }}
-            />
+            {loadingPdf && (
+              <div style={{ width: 300, height: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <p style={{ fontSize: 13, color: "var(--text-4)" }}>Cargando factura...</p>
+              </div>
+            )}
+            {!loadingPdf && bgUrl && (
+              <img 
+                src={bgUrl} 
+                alt="Documento" 
+                style={{ 
+                  display: "block", 
+                  maxWidth: "100%", 
+                  maxHeight: isFullscreen ? 'calc(100vh - 120px)' : '50vh', 
+                  objectFit: "contain",
+                  pointerEvents: "none",
+                  userSelect: "none"
+                }} 
+              />
+            )}
+            {!loadingPdf && !bgUrl && (
+              <div style={{ width: 300, height: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <p style={{ fontSize: 13, color: "var(--text-4)" }}>No se pudo cargar el PDF</p>
+              </div>
+            )}
+
+            {bgUrl && (
+              <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 10 }}>
+                <SignatureCanvas
+                  ref={sigRef}
+                  penColor="#000" // Negro
+                  minWidth={penWidths.min}
+                  maxWidth={penWidths.max}
+                  canvasProps={{
+                    className: "sigCanvas",
+                    style: { 
+                      width: "100%", 
+                      height: "100%", 
+                      display: "block",
+                      cursor: "crosshair"
+                    },
+                  }}
+                />
+              </div>
+            )}
           </div>
         </div>
 

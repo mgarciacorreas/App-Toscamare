@@ -162,8 +162,7 @@ export default function PedidosView() {
       localStorage.removeItem('firma_' + pedidoId);
       
       const pedido = pedidos.find(p => p.id === pedidoId);
-      const nextLabel = ESTADOS[pedido.estado_actual + 1]?.label || "Completado";
-      showToast(pedido.codigo + " → " + nextLabel);
+      showToast(pedido.codigo + " firmado. Revisa el PDF antes de completar la carga.", "info");
       await loadPedidos();
     } catch (e) {
       showToast(e.message || "Error al completar flujo", "error");
@@ -470,7 +469,7 @@ export default function PedidosView() {
                         )}
 
                         {/* Transportista flow at estado 2: Sign -> Confirm */}
-                        {canSign(p) && (
+                        {canSign(p) && (!p.pdf_firma || localStorage.getItem('firma_' + p.id)) && (
                           <>
                             <Btn
                               variant={localStorage.getItem('firma_' + p.id) ? "outline" : "primary"}
@@ -493,8 +492,21 @@ export default function PedidosView() {
                           </>
                         )}
 
-                        {/* Advance state button (hide at estado 2 if canSign) */}
-                        {showAdvanceBtn(p) && !canSign(p) && (
+                        {/* Opción de reescribir firma si ya está firmado */}
+                        {canSign(p) && p.pdf_firma && !localStorage.getItem('firma_' + p.id) && (
+                          <Btn
+                            variant="outline"
+                            size="sm"
+                            icon="edit"
+                            style={{ borderColor: 'var(--success)', color: 'var(--success)' }}
+                            onClick={() => setFirmaPedido(p)}
+                          >
+                            Re-firmar
+                          </Btn>
+                        )}
+
+                        {/* Advance state button (hide at estado 2 if canSign is not fulfilled, meaning no pdf_firma on server, or if there's an unconfirmed signature) */}
+                        {showAdvanceBtn(p) && (!canSign(p) || p.pdf_firma) && !localStorage.getItem('firma_' + p.id) && (
                           <Btn
                             variant="primary"
                             size="sm"
@@ -504,7 +516,7 @@ export default function PedidosView() {
                               setConfirmAction("advance");
                             }}
                           >
-                            {est.action}
+                            {p.estado_actual === 2 ? "Completar Carga" : est.action}
                           </Btn>
                         )}
                       </>
