@@ -13,7 +13,15 @@ from ocr.src.extract import extract_albaran_data
 from openpyxl import Workbook
 from io import BytesIO
 
+<<<<<<< HEAD
 import fitz
+=======
+# PDF manipulation for signature embedding
+import fitz  # PyMuPDF — para normalizar orientacion
+from pypdf import PdfReader, PdfWriter
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.lib.utils import ImageReader
+>>>>>>> d2fcb445a9e4a4582362105d67cdd8ae315403ea
 
 class PedidosService:
     
@@ -512,9 +520,39 @@ class PedidosService:
             print(f"[FIRMA][ERROR] Error decodificando firma: {e}")
             return {"error": "Firma invalida"}
 
-        # 4. Leer PDF original
+        # 4. Normalizar orientacion con PyMuPDF (rotar horizontales a vertical de verdad)
         try:
+<<<<<<< HEAD
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+=======
+            src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            dst_doc = fitz.open()  # documento nuevo vacio
+            for page in src_doc:
+                w, h = page.rect.width, page.rect.height
+                # Considerar rotacion existente para saber dimensiones reales
+                rot = page.rotation
+                if rot in (90, 270):
+                    w, h = h, w
+                if w > h:
+                    # Pagina horizontal: crear nueva pagina vertical y renderizar rotada
+                    new_page = dst_doc.new_page(width=h, height=w)
+                    new_page.show_pdf_page(new_page.rect, src_doc, page.number, rotate=90)
+                else:
+                    # Pagina ya vertical: copiar tal cual
+                    new_page = dst_doc.new_page(width=w, height=h)
+                    new_page.show_pdf_page(new_page.rect, src_doc, page.number)
+            normalized_bytes = dst_doc.tobytes()
+            dst_doc.close()
+            src_doc.close()
+            print(f"[FIRMA] PDF normalizado: {len(pdf_bytes)} -> {len(normalized_bytes)} bytes")
+        except Exception as e:
+            print(f"[FIRMA][ERROR] Error normalizando PDF: {e}")
+            normalized_bytes = pdf_bytes  # Usar original si falla
+
+        # 5. Leer PDF normalizado con pypdf y añadir firma a todas las paginas
+        try:
+            reader = PdfReader(BytesIO(normalized_bytes))
+>>>>>>> d2fcb445a9e4a4582362105d67cdd8ae315403ea
         except Exception as e:
             print(f"[FIRMA][ERROR] Error leyendo PDF: {e}")
             return {"error": "Error procesando PDF"}
@@ -527,6 +565,7 @@ class PedidosService:
             x_pos = firma_x + (firma_width - w) / 2
             page.insert_text((x_pos, text_y), text, fontsize=font_size, color=color, fontname="helv")
 
+<<<<<<< HEAD
         # 5. Procesar SOLO la primera pagina para la firma
         if len(doc) > 0:
             page = doc[0]
@@ -541,6 +580,42 @@ class PedidosService:
             # y coordenadas relativas al documento completo
             firma_rect = fitz.Rect(0, 0, rect.width, rect.height)
             page.insert_image(firma_rect, stream=firma_bytes)
+=======
+        for page in reader.pages:
+            page_w = float(page.mediabox.width)
+            page_h = float(page.mediabox.height)
+
+            # Crear overlay con la firma en esquina superior derecha
+            overlay_buf = BytesIO()
+            cv = rl_canvas.Canvas(overlay_buf, pagesize=(page_w, page_h))
+
+            margin = 20
+            fw, fh = 150, 50
+            fx = page_w - fw - margin
+            fy = page_h - fh - margin - 14
+
+            cv.setFont("Helvetica", 7)
+            cv.setFillColorRGB(0.4, 0.4, 0.4)
+            cv.drawCentredString(fx + fw / 2, fy + fh + 4, "Firma del cliente")
+
+            firma_image = ImageReader(BytesIO(firma_bytes))
+            cv.drawImage(firma_image, fx, fy, width=fw, height=fh, mask='auto')
+
+            cv.setStrokeColorRGB(0.7, 0.7, 0.7)
+            cv.setLineWidth(0.5)
+            cv.line(fx, fy - 2, fx + fw, fy - 2)
+
+            cv.setFont("Helvetica", 5)
+            cv.setFillColorRGB(0.5, 0.5, 0.5)
+            cv.drawCentredString(fx + fw / 2, fy - 10, f"Firmado: {fecha_firma}")
+
+            cv.save()
+            overlay_buf.seek(0)
+
+            overlay_page = PdfReader(overlay_buf).pages[0]
+            page.merge_page(overlay_page)
+            writer.add_page(page)
+>>>>>>> d2fcb445a9e4a4582362105d67cdd8ae315403ea
 
         # 7. Generar PDF firmado
         signed_bytes = doc.write()

@@ -172,9 +172,13 @@ def actualizar_estado_pedido(id):
 
     rol_usuario = payload.get("rol")
 
-    resultado = service.actualizar_estado(str(id), rol_usuario)
+    try:
+        resultado = service.actualizar_estado(str(id), rol_usuario)
+    except Exception as e:
+        print(f"[ESTADO][ERROR] Error actualizando estado: {e}")
+        return respuesta_error(f"Error al actualizar estado: {e}", 500)
 
-    if "error" in resultado:
+    if isinstance(resultado, dict) and "error" in resultado:
         return respuesta_error(resultado["error"], 400)
 
     return jsonify(resultado), 200
