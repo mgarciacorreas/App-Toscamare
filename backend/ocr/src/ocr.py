@@ -11,6 +11,34 @@ pytesseract.pytesseract.tesseract_cmd = _tesseract
 os.environ['TESSDATA_PREFIX'] = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tessdata')
 
 
+def get_ocr_runtime_info(required_langs=None):
+    """Return runtime diagnostics to quickly validate OCR setup in production."""
+    required_langs = required_langs or ['spa', 'por', 'eng']
+    info = {
+        'tesseract_cmd': pytesseract.pytesseract.tesseract_cmd,
+        'tessdata_prefix': os.environ.get('TESSDATA_PREFIX'),
+        'tesseract_found': bool(shutil.which('tesseract') or os.path.exists(pytesseract.pytesseract.tesseract_cmd or '')),
+        'version': None,
+        'available_langs': [],
+        'missing_langs': [],
+    }
+
+    try:
+        info['version'] = str(pytesseract.get_tesseract_version())
+    except Exception as e:
+        info['version'] = f'error: {e}'
+
+    try:
+        langs = pytesseract.get_languages(config='')
+        info['available_langs'] = sorted(langs)
+        info['missing_langs'] = [l for l in required_langs if l not in langs]
+    except Exception as e:
+        info['missing_langs'] = list(required_langs)
+        info['available_langs'] = [f'error: {e}']
+
+    return info
+
+
 # ============================================================
 #  DETECCIÓN DE IDIOMA
 # ============================================================
