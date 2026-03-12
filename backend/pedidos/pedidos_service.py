@@ -11,7 +11,7 @@ from pathlib import Path
 
 # OCR imports (usa el paquete local `ocr/src`)
 from ocr.src.pdf_to_img import convert_pdf_to_images
-from ocr.src.ocr import process_image_with_ocr, get_ocr_data
+from ocr.src.ocr import ocr_image_text_and_data
 from ocr.src.extract import extract_albaran_data
 from openpyxl import Workbook
 from pypdf import PdfReader, PdfWriter
@@ -135,58 +135,54 @@ class PedidosService:
     
     # Crear un nuevo pedido con PDF. Extrae datos automáticamente del PDF con OCR.
     def crear_con_pdf(self, cliente_nombre, usuario_responsable_id, archivo_pdf):
-
         pedido_id = str(uuid.uuid4())
         nombre_archivo = f"{pedido_id}.pdf"
 
-        print(f"[CREATE_PEDIDO] Iniciando creación de pedido")
-        print(f"[CREATE_PEDIDO] cliente_nombre: {cliente_nombre}")
-        print(f"[CREATE_PEDIDO] usuario_responsable_id: {usuario_responsable_id}")
-        print(f"[CREATE_PEDIDO] archivo_pdf: {archivo_pdf.filename if archivo_pdf else None}")
+        print(f"[CREATE_PEDIDO] Iniciando creación. ID: {pedido_id}, Cliente: {cliente_nombre}")
 
-        # Guardar PDF en archivo temporal para procesamiento
+       # 1. Crear temporal para el PDF
         tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tmp_pdf_path = tmp_pdf.name
+        tmp_pdf.close()
+        
         try:
-            archivo_pdf.save(tmp_pdf.name)
-            tmp_pdf_path = tmp_pdf.name
-            print(f"[CREATE_PEDIDO] PDF guardado en temporales: {tmp_pdf_path}")
+            archivo_pdf.save(tmp_pdf_path)
             
-            # RECTIFICAR ORIENTACIÓN: Si el documento viene horizontal, rotarlo a vertical.
+            # RECTIFICAR ORIENTACIÓN
             try:
-                reader = PdfReader(tmp_pdf_path)
-                writer = PdfWriter()
                 modificado = False
+                writer = PdfWriter()
                 
-                for page in reader.pages:
-                    w = float(page.mediabox.width)
-                    h = float(page.mediabox.height)
-                    
-                    if w > h:
-                        page.rotate(270)
-                        modificado = True
-                    
-                    writer.add_page(page)
+                # Usar "with open" asegura que Python suelte el archivo al terminar de leer
+                with open(tmp_pdf_path, 'rb') as f_in:
+                    reader = PdfReader(f_in)
+                    for page in reader.pages:
+                        w, h = float(page.mediabox.width), float(page.mediabox.height)
+                        if w > h:
+                            page.rotate(270)
+                            modificado = True
+                        writer.add_page(page)
                 
+                # Solo sobreescribir una vez que el bloque anterior (f_in) ya se cerró
                 if modificado:
                     with open(tmp_pdf_path, 'wb') as f_out:
                         writer.write(f_out)
-                    print("[CREATE_PEDIDO] PDF corregido: Rotado a formato vertical exitosamente.")
+                    print("[CREATE_PEDIDO] PDF rotado a formato vertical.")
             except Exception as e:
-                print(f"[CREATE_PEDIDO][ERROR] Error ignorado al intentar rotar el PDF: {e}")
+                print(f"[CREATE_PEDIDO][ERROR] Ignorado error al rotar: {e}")
 
-            # Subir a Supabase Storage
+            # 2. Subir a Supabase Storage
             with open(tmp_pdf_path, 'rb') as f:
                 supabase_admin.storage.from_(self.BUCKET).upload(
                     nombre_archivo,
                     f.read(),
                     {"content-type": "application/pdf"}
                 )
-            print(f"[CREATE_PEDIDO] PDF subido a Supabase Storage: {nombre_archivo}")
         except Exception as e:
-            print(f"[CREATE_PEDIDO][ERROR] Error al guardar PDF: {e}")
+            print(f"[CREATE_PEDIDO][ERROR] Error al guardar/subir PDF: {e}")
             return {"error": f"Error al guardar PDF: {e}"}
 
-        # Crear pedido en BD con el PDF
+        # 3. Crear pedido en BD
         nuevo_pedido = {
             "id": pedido_id,
             "cliente_nombre": cliente_nombre,
@@ -196,117 +192,72 @@ class PedidosService:
         }
 
         try:
-            response = (
-                supabase_admin
-                .table("pedidos")
-                .insert(nuevo_pedido)
-                .execute()
-            )
-            print(f"[CREATE_PEDIDO] Pedido creado en BD: {pedido_id}")
+            response = supabase_admin.table("pedidos").insert(nuevo_pedido).execute()
         except Exception as e:
             print(f"[CREATE_PEDIDO][ERROR] Error al crear pedido en BD: {e}")
-            return {"error": f"Error al crear pedido: {e}"}
+            return {"error": f"Error al crear pedido en BD: {e}"}
 
-        tmp_images_dir = None
+        # 4. Procesamiento OCR
         try:
-            ocr_total_start = time.time()
-            print(f"[OCR] Iniciando procesamiento OCR (background) para pedido {pedido_id}")
-
-            tmp_images_dir = Path(tempfile.mkdtemp())
-
-            # Convertir PDF a imágenes
-            try:
-                ocr_dpi = int(os.getenv('OCR_DPI', '220'))
-                convert_start = time.time()
-                print(f"[OCR] convert_pdf_to_images START pedido={pedido_id} dpi={ocr_dpi}")
-                image_files = convert_pdf_to_images(tmp_pdf_path, tmp_images_dir, dpi=ocr_dpi)
-                print(f"[OCR] convert_pdf_to_images DONE pedido={pedido_id} elapsed={time.time()-convert_start:.2f}s")
-            except Exception as e:
-                print(f"[OCR][ERROR] error al convertir PDF a imágenes: {e}")
-                image_files = []
-
-            print(f"[OCR] imágenes generadas: {len(image_files)}")
-
-            # Ejecutar OCR sobre cada imagen y recolectar texto y datos
-            all_text = ""
-            ocr_data_list = []
-            for idx, img in enumerate(image_files, start=1):
-                page_start = time.time()
-                print(f"[OCR] Página {idx}/{len(image_files)} START img={img}")
+            print(f"[OCR] Iniciando OCR para {pedido_id}")
+            
+            # Uso de TemporaryDirectory para limpieza automática
+            with tempfile.TemporaryDirectory() as tmp_images_dir_str:
+                tmp_images_dir = Path(tmp_images_dir_str)
+                
                 try:
-                    txt_start = time.time()
-                    print(f"[OCR] process_image_with_ocr START img={img}")
-                    t = process_image_with_ocr(img)
-                    print(f"[OCR] process_image_with_ocr DONE img={img} elapsed={time.time()-txt_start:.2f}s chars={len(t)}")
+                    image_files = convert_pdf_to_images(tmp_pdf_path, tmp_images_dir)
                 except Exception as e:
-                    print(f"[OCR][ERROR] error en process_image_with_ocr para {img}: {e}")
-                    t = ""
+                    print(f"[OCR][ERROR] Error al convertir PDF: {e}")
+                    image_files = []
 
-                all_text += t + "\n"
-
-                try:
-                    data_start = time.time()
-                    print(f"[OCR] get_ocr_data START img={img}")
-                    data = get_ocr_data(img, lang='spa+por')
-                    if data:
-                        print(
-                            f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s "
-                            f"words={len(data.get('text', [])) if isinstance(data, dict) else 'n/a'}"
-                        )
-                        ocr_data_list.append(data)
-                    else:
-                        print(f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s result=None")
-                except Exception as e:
-                    print(f"[OCR][ERROR] error en get_ocr_data para {img}: {e}")
-
-                print(f"[OCR] Página {idx}/{len(image_files)} DONE elapsed={time.time()-page_start:.2f}s")
-
-            # Extraer productos del albarán
-            try:
-                albaran_data = extract_albaran_data(all_text, ocr_data_list=ocr_data_list)
-            except Exception as e:
-                print(f"[OCR][ERROR] error extrayendo productos: {e}")
-                albaran_data = {'productos': []}
-
-            productos = albaran_data.get('productos', [])
-            print(f"[OCR] productos extraidos: {len(productos)}")
-
-            # Insertar productos en la tabla 'pedido_productos'
-            if productos:
-                for producto in productos:
+                all_text = ""
+                ocr_data_list = []
+                
+                for img in image_files:
                     try:
-                        kilos = producto.get('peso_kg') or 0
-                        fila = {
+                        t, data = ocr_image_text_and_data(img, lang='spa+por')
+                        all_text += t + "\n"
+                        if data:
+                            ocr_data_list.append(data)
+                    except Exception as e:
+                        print(f"[OCR][ERROR] Error en ocr_image_text_and_data: {e}")
+
+                # Extraer productos
+                try:
+                    albaran_data = extract_albaran_data(all_text, ocr_data_list=ocr_data_list)
+                    productos = albaran_data.get('productos', [])
+                except Exception as e:
+                    print(f"[OCR][ERROR] Error extrayendo productos: {e}")
+                    productos = []
+
+                # OPTIMIZACIÓN: Inserción masiva (Bulk Insert) de productos
+                if productos:
+                    filas_a_insertar = []
+                    for producto in productos:
+                        filas_a_insertar.append({
                             'pedido_id': pedido_id,
                             'nombre_producto': producto.get('especie') or producto.get('linea_original'),
-                            'cantidad': kilos,
-                            'precio': producto.get('precio') or 0,
-                        }
-                        supabase_admin.table('pedido_productos').insert(fila).execute()
-                        print(f"[OCR] Producto insertado: {fila['nombre_producto']} - {fila['cantidad']} kg - {fila['precio']} €")
+                            'cantidad': producto.get('peso_kg') or 0,
+                            'precio': producto.get('precio') or 0
+                        })
+                    
+                    try:
+                        # Una sola llamada a la API de Supabase en lugar de un bucle
+                        supabase_admin.table('pedido_productos').insert(filas_a_insertar).execute()
+                        print(f"[OCR] {len(filas_a_insertar)} productos insertados correctamente.")
                     except Exception as e:
-                        print(f"[OCR][ERROR] Error al insertar producto: {e}")
-            else:
-                print(f"[OCR] WARNING: No se extrajeron productos del PDF")
-
-            print(f"[OCR] Pipeline completo pedido={pedido_id} elapsed={time.time()-ocr_total_start:.2f}s")
+                        print(f"[OCR][ERROR] Error en inserción masiva: {e}")
+                else:
+                    print(f"[OCR] WARNING: No se extrajeron productos")
 
         except Exception as e:
-            print(f"[OCR][WARNING] Error procesando OCR del PDF para pedido {pedido_id}: {e}")
+            print(f"[OCR][WARNING] Error general en proceso OCR: {e}")
+            
         finally:
-            try:
-                if tmp_pdf_path and Path(tmp_pdf_path).exists():
-                    Path(tmp_pdf_path).unlink()
-                    print(f"[OCR] Archivo temporal PDF limpiado")
-            except Exception:
-                pass
-            try:
-                if tmp_images_dir and tmp_images_dir.exists():
-                    shutil.rmtree(tmp_images_dir)
-                    print(f"[OCR] Directorio temporal de imágenes limpiado")
-            except Exception:
-                pass
-
+            # Solo necesitamos limpiar el PDF manualmente, TemporaryDirectory limpia las imágenes
+            if Path(tmp_pdf_path).exists():
+                Path(tmp_pdf_path).unlink(missing_ok=True)
 
         return response.data
     

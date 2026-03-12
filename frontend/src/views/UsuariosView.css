@@ -2,7 +2,8 @@
    CONTENEDOR PRINCIPAL Y CABECERA
 ========================================= */
 .view-wrapper {
-  padding: 40px 40px 80px 40px;
+  padding: clamp(20px, 4vw, 40px);
+  padding-bottom: 80px;
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -12,6 +13,8 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 30px;
+  flex-wrap: wrap; /* Ensure header can wrap if title is long */
+  gap: 16px;
 }
 
 .view-title {
@@ -50,7 +53,7 @@
 
 .search-wrapper {
   flex: 1;
-  min-width: 280px;
+  min-width: 200px; /* Reduced from 280px to prevent overflow */
   position: relative;
 }
 
@@ -80,6 +83,7 @@
 
 .sort-wrapper {
   min-width: 200px;
+  flex: 1; /* Allow sorting dropdown to fill available space on small screens */
 }
 
 .toolbar-bottom {
@@ -145,7 +149,7 @@
 ========================================= */
 .users-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   gap: 20px;
 }
 
@@ -188,6 +192,8 @@
 .card-user-info {
   display: flex;
   gap: 16px;
+  flex: 1;
+  min-width: 0;
 }
 
 .card-avatar {
@@ -203,12 +209,18 @@
   font-weight: 600;
   font-size: 17px;
   color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-user-email {
   font-size: 13px;
   color: var(--text-3);
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-footer {

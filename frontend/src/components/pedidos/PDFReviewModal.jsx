@@ -97,24 +97,26 @@ export default function PDFReviewModal({ open, onClose, pedido, onConfirm }) {
         </div>
 
         {/* Action Bar */}
-        <div style={{ 
-          display: 'flex', 
+        <div 
+          className="flex-col-mobile"
+          style={{ 
           justifyContent: 'space-between', 
           alignItems: 'center',
-          padding: '24px 40px',
+          gap: 16,
+          padding: 'clamp(14px, 2vw, 24px) clamp(16px, 3vw, 40px)',
           background: 'var(--bg-1)',
           borderTop: '1px solid var(--border-1)',
           boxShadow: '0 -8px 24px rgba(0,0,0,0.2)',
           zIndex: 10
         }}>
-          <div>
+          <div style={{ textAlign: 'center' }}>
             <h4 style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>¿Todo correcto?</h4>
             <p style={{ fontSize: 12, color: 'var(--text-4)' }}>Revisa que la firma sea legible antes de completar.</p>
           </div>
 
-          <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 12, width: '100%', justifyContent: 'center' }}>
             <Btn variant="outline" onClick={onClose} disabled={confirming}>
-              Volver a editar
+              Editar
             </Btn>
             <Btn 
               variant="primary" 
@@ -122,9 +124,9 @@ export default function PDFReviewModal({ open, onClose, pedido, onConfirm }) {
               size="lg"
               onClick={handleFinalConfirm}
               disabled={confirming || loading || !pdfUrl}
-              style={{ paddingLeft: 30, paddingRight: 30 }}
+              style={{ paddingLeft: 16, paddingRight: 16, flex: 1 }}
             >
-              {confirming ? "Finalizando..." : "Confirmar y Completar"}
+              {confirming ? "Finalizando..." : "Completar"}
             </Btn>
           </div>
         </div>

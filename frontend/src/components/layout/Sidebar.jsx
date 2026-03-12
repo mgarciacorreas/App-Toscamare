@@ -1,14 +1,23 @@
-import { useContext } from 'react';
+import { useContext, useEffect } from 'react';
 import { AppContext } from '@/context/AppContext';
 import { ROLES, ROLE_META } from '@/config/constants';
 import { SVG } from '@/components/ui';
 
-export default function Sidebar({ currentView, setView }) {
+export default function Sidebar({ currentView, setView, isOpen, setIsOpen }) {
   const { session, adminViewAs, setAdminViewAs } = useContext(AppContext);
   const { user } = session;
   const isAdmin = user.rol === ROLES.ADMIN;
   const displayRole = isAdmin && adminViewAs ? adminViewAs : user.rol;
   const role = ROLE_META[displayRole] || ROLE_META[user.rol];
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [isOpen]);
 
   const getNavItemsByRole = () => {
     const baseItems = [
@@ -45,21 +54,35 @@ export default function Sidebar({ currentView, setView }) {
   ];
 
   return (
-    <aside style={{ width: 260, flexShrink: 0, background: 'var(--bg-1)', borderRight: '1px solid var(--border-1)',
-      display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
-      {/* Brand */}
-      <div style={{ padding: '20px 18px', borderBottom: '1px solid var(--border-1)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)',
-            border: '1px solid var(--accent-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <SVG name="box" size={20} color="var(--accent)" />
+    <>
+      {/* Mobile Overlay */}
+      <div 
+        className={`sidebar-overlay ${isOpen ? 'open' : ''}`} 
+        onClick={() => setIsOpen(false)}
+      />
+
+      <aside className={`app-sidebar ${isOpen ? 'open' : ''}`}>
+        {/* Brand */}
+        <div style={{ padding: '24px 20px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--accent-dim)',
+              border: '1px solid var(--accent-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <SVG name="box" size={20} color="var(--accent)" />
+            </div>
+            <div>
+              <span style={{ fontSize: 16, fontWeight: 600, display: 'block', lineHeight: 1.2 }}>Toscamare</span>
+              <span style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '.04em' }}>v1.0</span>
+            </div>
           </div>
-          <div>
-            <span style={{ fontSize: 16, fontWeight: 600, display: 'block', lineHeight: 1.2 }}>Toscamare</span>
-            <span style={{ fontSize: 11, color: 'var(--text-4)', letterSpacing: '.04em' }}>v1.0</span>
-          </div>
+          
+          <button 
+            className="show-tablet"
+            onClick={() => setIsOpen(false)}
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', padding: 8 }}
+          >
+            <SVG name="x" size={20} />
+          </button>
         </div>
-      </div>
 
       {/* Admin role switcher */}
       {isAdmin && (
@@ -102,7 +125,7 @@ export default function Sidebar({ currentView, setView }) {
       <div style={{ padding: '14px 14px 16px', borderTop: '1px solid var(--border-1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 40, height: 40, borderRadius: '50%', background: role.color + '18',
-            border: '1px solid ' + role.color + '30', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            border: '1px solid ' + role.color + '30', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <SVG name="user" size={18} color={role.color} />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -112,5 +135,6 @@ export default function Sidebar({ currentView, setView }) {
         </div>
       </div>
     </aside>
+    </>
   );
 }

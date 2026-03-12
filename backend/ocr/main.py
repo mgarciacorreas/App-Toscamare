@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 from src.pdf_to_img import convert_pdf_to_images
-from src.ocr import process_image_with_ocr, get_ocr_data, detect_language_from_image
+from src.ocr import ocr_image_text_and_data, detect_language_from_image
 from src.extract import extract_albaran_data
 
 
@@ -55,9 +55,8 @@ def main():
             all_text = ""
             ocr_data_list = []
             for img_file in image_files:
-                text = process_image_with_ocr(img_file, lang=ocr_lang)
+                text, data = ocr_image_text_and_data(img_file, lang=ocr_lang)
                 all_text += text + "\n"
-                data = get_ocr_data(img_file, lang=ocr_lang)
                 if data:
                     ocr_data_list.append(data)
             print(f"   ✓ OCR completado ({len(all_text)} caracteres)\n")

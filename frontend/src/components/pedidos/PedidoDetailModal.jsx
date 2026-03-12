@@ -55,7 +55,7 @@ export default function PedidoDetailModal({
       title={"Detalle — " + pedido.codigo}
       wide
     >
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      <div className="responsive-grid" style={{ gap: 20 }}>
         <div>
           <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
             <Badge color={est.color} bg={est.bg} border={est.borderColor}>

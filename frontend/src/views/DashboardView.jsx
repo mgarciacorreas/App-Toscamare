@@ -19,9 +19,9 @@ export default function DashboardView({ setView }) {
   });
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: 'clamp(16px, 4vw, 28px)' }}>
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 28 }}>
         {stats.map((s, i) => (
           <div key={s.estado} className={'anim-fade d' + (i + 1)} onClick={() => setView('pedidos')}
             style={{ background: 'var(--bg-2)', border: '1px solid var(--border-1)', borderRadius: 'var(--r3)',
@@ -59,7 +59,7 @@ export default function DashboardView({ setView }) {
         </div>
         <div style={{ maxHeight: 400, overflowY: 'auto' }}>
           {myPedidos.slice(0, 8).map(p => (
-            <div key={p.id} style={{ padding: '12px 18px', borderBottom: '1px solid var(--border-1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div key={p.id} className="flex-col-mobile" style={{ padding: '12px 18px', borderBottom: '1px solid var(--border-1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <div>
                 <code style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--accent)' }}>{p.codigo}</code>
                 <p style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 2 }}>{p.cliente}</p>

@@ -130,7 +130,7 @@ const UserCard = ({
           >
             <SVG name="user" size={24} color={meta.color} />
           </div>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div className="card-user-name">{user.nombre}</div>
             <div className="card-user-email">{user.email}</div>
           </div>

@@ -113,11 +113,11 @@ export default function ProductosTable({ pedidoId, editable, canManage }) {
   return (
     <div>
       <div
+        className="table-responsive"
         style={{
           background: "var(--bg-1)",
           border: "1px solid var(--border-1)",
-          borderRadius: "var(--r2)",
-          overflow: "hidden",
+          borderRadius: "var(--r2)"
         }}
       >
         <table style={{ width: "100%", borderCollapse: "collapse" }}>

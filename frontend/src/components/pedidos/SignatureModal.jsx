@@ -179,10 +179,12 @@ export default function SignatureModal({ open, onClose, pedido }) {
           </div>
         )}
 
-        <div style={{ 
+        <div 
+          className={isFullscreen ? "flex-col-mobile" : ""}
+          style={{ 
           flexGrow: 1, 
           display: 'flex', 
-          flexDirection: isFullscreen ? 'row' : 'column', 
+          flexDirection: !isFullscreen ? 'column' : undefined, 
           gap: 20, 
           overflow: 'hidden',
           minHeight: 0 // important for flex children to shrink
@@ -262,7 +264,7 @@ export default function SignatureModal({ open, onClose, pedido }) {
 
           {/* Controls: Sidebar or Footer */}
           <div style={{ 
-            width: isFullscreen ? 280 : '100%',
+            width: isFullscreen ? 'min(280px, 100%)' : '100%',
             flexShrink: 0,
             display: "flex", 
             flexDirection: "column",

@@ -10,7 +10,7 @@ function getInitialTheme() {
   return 'dark';
 }
 
-export default function Topbar({ title, subtitle, onNavigate }) {
+export default function Topbar({ title, subtitle, onNavigate, toggleSidebar }) {
   const { logout, pedidos, session } = useContext(AppContext);
   const [theme, setTheme] = useState(getInitialTheme);
   const [bellOpen, setBellOpen] = useState(false);
@@ -62,14 +62,23 @@ export default function Topbar({ title, subtitle, onNavigate }) {
 
   const btnStyle = { width: 36, height: 36, borderRadius: 'var(--r2)', background: 'var(--bg-2)',
     border: '1px solid var(--border-2)', cursor: 'pointer', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', color: 'var(--text-3)', transition: '.15s var(--ease)' };
+    justifyContent: 'center', color: 'var(--text-3)', transition: '.15s var(--ease)', flexShrink: 0 };
 
   return (
-    <header style={{ padding: '16px 28px', background: 'var(--bg-1)', borderBottom: '1px solid var(--border-1)',
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-      <div>
-        <h1 style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em' }}>{title}</h1>
-        {subtitle && <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 2 }}>{subtitle}</p>}
+    <header style={{ padding: 'clamp(12px, 3vw, 16px) clamp(16px, 4vw, 28px)', background: 'var(--bg-1)', borderBottom: '1px solid var(--border-1)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <button 
+          className="show-tablet-flex"
+          onClick={toggleSidebar} 
+          style={{ ...btnStyle, background: 'transparent', border: 'none', color: 'var(--text-1)', padding: 0, flexShrink: 0 }}
+        >
+          <SVG name="menu" size={24} />
+        </button>
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ fontSize: 'clamp(16px, 4vw, 20px)', fontWeight: 600, letterSpacing: '-0.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</h1>
+          {subtitle && <p style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 2 }}>{subtitle}</p>}
+        </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {/* Theme toggle */}

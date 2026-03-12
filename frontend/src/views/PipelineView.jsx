@@ -10,8 +10,8 @@ export default function PipelineView() {
   const [detail, setDetail] = useState(null);
 
   return (
-    <div style={{ padding: 28 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, minHeight: 'calc(100vh - 180px)' }}>
+    <div style={{ padding: 'clamp(16px, 3vw, 28px)' }}>
+      <div className="responsive-grid" style={{ minHeight: 'calc(100vh - 180px)' }}>
         {Object.entries(ESTADOS).filter(([k]) => parseInt(k) <= 3).map(([estado, cfg]) => {
           const items = pedidos.filter(p => p.estado_actual === parseInt(estado));
           return (

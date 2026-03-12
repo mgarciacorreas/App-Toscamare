@@ -180,7 +180,7 @@ export default function PedidosView() {
   };
 
   return (
-    <div style={{ padding: 28 }}>
+    <div style={{ padding: 'clamp(16px, 4vw, 28px)' }}>
       {/* Toolbar */}
       <div
         style={{
@@ -212,7 +212,9 @@ export default function PedidosView() {
                 borderRadius: "var(--r2)",
                 color: "var(--text-1)",
                 fontSize: 15,
-                width: 280,
+                width: "100%",
+                minWidth: "220px",
+                maxWidth: "340px",
                 height: 44,
               }}
             />
@@ -232,6 +234,7 @@ export default function PedidosView() {
             <Select
               value={filterEstado}
               onChange={(e) => setFilterEstado(e.target.value)}
+              style={{ width: 'var(--mobile-w, auto)' }}
               options={[
                 { value: "todos", label: "Todos los estados" },
                 ...Object.entries(ESTADOS)
@@ -244,18 +247,19 @@ export default function PedidosView() {
             />
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <p style={{ fontSize: 14, color: "var(--text-4)" }}>
+        <div 
+          className="flex-col-mobile"
+          style={{ display: "flex", alignItems: "center", gap: 12, width: "var(--mobile-w, auto)", marginLeft: 'auto' }}
+        >
+          <p style={{ fontSize: 13, color: "var(--text-4)", whiteSpace: 'nowrap' }}>
             {filtered.length} pedido{filtered.length !== 1 ? "s" : ""}
-            {isAdmin &&
-              adminViewAs &&
-              " — Vista: " + (ROLE_META[adminViewAs]?.label || "")}
           </p>
           {canCreate && (
             <Btn
               variant="primary"
               icon="plus"
               onClick={() => setShowCreate(true)}
+              style={{ width: 'var(--mobile-w, auto)' }}
             >
               Nuevo Pedido
             </Btn>
@@ -283,7 +287,7 @@ export default function PedidosView() {
                   background: "var(--bg-2)",
                   border: "1px solid var(--border-1)",
                   borderRadius: "var(--r3)",
-                  padding: "24px 28px",
+                  padding: "clamp(16px, 4vw, 24px) clamp(20px, 5vw, 28px)",
                   transition: ".15s var(--ease)",
                   borderLeft: "3px solid " + est.color,
                 }}
@@ -301,15 +305,17 @@ export default function PedidosView() {
                     alignItems: "flex-start",
                     justifyContent: "space-between",
                     gap: 16,
+                    flexWrap: "wrap"
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ flex: "1 1 250px", minWidth: 0 }}>
                     <div
                       style={{
                         display: "flex",
                         alignItems: "center",
                         gap: 10,
                         marginBottom: 6,
+                        flexWrap: "wrap",
                       }}
                     >
                       <code
@@ -331,7 +337,7 @@ export default function PedidosView() {
                       </Badge>
                     </div>
                     <p
-                      style={{ fontSize: 17, fontWeight: 500, marginBottom: 3 }}
+                      style={{ fontSize: 17, fontWeight: 500, marginBottom: 3, wordBreak: "break-word" }}
                     >
                       {p.cliente}
                     </p>
@@ -341,6 +347,7 @@ export default function PedidosView() {
                         alignItems: "center",
                         gap: 14,
                         marginTop: 8,
+                        flexWrap: "wrap"
                       }}
                     >
                       <span
@@ -382,8 +389,12 @@ export default function PedidosView() {
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 6,
+                      gap: 8,
                       flexShrink: 0,
+                      flexWrap: "wrap",
+                      justifyContent: "flex-end",
+                      marginTop: "var(--mobile-margin, 0)",
+                      width: "var(--mobile-w, auto)"
                     }}
                   >
                     <Btn
