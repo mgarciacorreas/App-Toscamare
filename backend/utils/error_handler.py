@@ -27,4 +27,13 @@ def register_error_handlers(app):
     
     @app.errorhandler(500)
     def internal_error(error):
+        app.logger.exception("Internal server error", exc_info=error)
+        return respuesta_error("Error interno del servidor", 500)
+
+    @app.errorhandler(Exception)
+    def unhandled_exception(error):
+        # Log full traceback so Render runtime logs show the real cause.
+        app.logger.exception("Unhandled exception", exc_info=error)
+        if isinstance(error, HTTPException):
+            return respuesta_error(error.description, error.code)
         return respuesta_error("Error interno del servidor", 500)

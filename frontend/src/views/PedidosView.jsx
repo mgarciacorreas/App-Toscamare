@@ -7,6 +7,7 @@ import PedidoFormModal from "@/components/pedidos/PedidoFormModal";
 import PedidoDetailModal from "@/components/pedidos/PedidoDetailModal";
 import FirmaModal from "@/components/pedidos/FirmaModal";
 import SignatureModal from "@/components/pedidos/SignatureModal";
+import PDFReviewModal from "@/components/pedidos/PDFReviewModal";
 import * as api from "@/utils/api";
 
 export default function PedidosView() {
@@ -20,6 +21,7 @@ export default function PedidosView() {
   const [confirmAction, setConfirmAction] = useState(null); // 'advance' | 'rollback' | 'delete'
   const [actionLoading, setActionLoading] = useState(null);
   const [firmaPedido, setFirmaPedido] = useState(null);
+  const [reviewPedido, setReviewPedido] = useState(null);
 
   const userRol = session.user.rol;
   const effectiveRol = adminViewAs || userRol;
@@ -130,6 +132,8 @@ export default function PedidosView() {
   // Rollback: send pedido back one estado for corrections
   const canRollback = (p) => {
     if (p.estado_actual <= 0) return false;
+    // Ni la oficina ni el administrador pueden devolver pedidos ya firmados (estado 3)
+    if (p.estado_actual === 3 && (effectiveRol === ROLES.OFICINA || effectiveRol === ROLES.ADMIN)) return false;
     if (isAdmin || isOficina) return true;
     return ESTADOS[p.estado_actual]?.role === effectiveRol;
   };
@@ -162,9 +166,12 @@ export default function PedidosView() {
       localStorage.removeItem('firma_' + pedidoId);
       
       const pedido = pedidos.find(p => p.id === pedidoId);
-      const nextLabel = ESTADOS[pedido.estado_actual + 1]?.label || "Completado";
-      showToast(pedido.codigo + " → " + nextLabel);
+      showToast(pedido.codigo + " firmado.", "info");
       await loadPedidos();
+      
+      // Auto-open review modal
+      const updatedPedido = (await api.fetchPedidos()).find(p => p.id === pedidoId);
+      if (updatedPedido) setReviewPedido(updatedPedido);
     } catch (e) {
       showToast(e.message || "Error al completar flujo", "error");
     } finally {
@@ -204,8 +211,9 @@ export default function PedidosView() {
                 border: "1px solid var(--border-2)",
                 borderRadius: "var(--r2)",
                 color: "var(--text-1)",
-                fontSize: 13,
-                width: 240,
+                fontSize: 15,
+                width: 280,
+                height: 44,
               }}
             />
             <div
@@ -237,7 +245,7 @@ export default function PedidosView() {
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <p style={{ fontSize: 12, color: "var(--text-4)" }}>
+          <p style={{ fontSize: 14, color: "var(--text-4)" }}>
             {filtered.length} pedido{filtered.length !== 1 ? "s" : ""}
             {isAdmin &&
               adminViewAs &&
@@ -275,7 +283,7 @@ export default function PedidosView() {
                   background: "var(--bg-2)",
                   border: "1px solid var(--border-1)",
                   borderRadius: "var(--r3)",
-                  padding: "16px 20px",
+                  padding: "24px 28px",
                   transition: ".15s var(--ease)",
                   borderLeft: "3px solid " + est.color,
                 }}
@@ -307,7 +315,7 @@ export default function PedidosView() {
                       <code
                         style={{
                           fontFamily: "var(--mono)",
-                          fontSize: 13,
+                          fontSize: 15,
                           fontWeight: 500,
                           color: est.color,
                         }}
@@ -323,7 +331,7 @@ export default function PedidosView() {
                       </Badge>
                     </div>
                     <p
-                      style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}
+                      style={{ fontSize: 17, fontWeight: 500, marginBottom: 3 }}
                     >
                       {p.cliente}
                     </p>
@@ -337,7 +345,7 @@ export default function PedidosView() {
                     >
                       <span
                         style={{
-                          fontSize: 11,
+                          fontSize: 13,
                           color: "var(--text-4)",
                           display: "flex",
                           alignItems: "center",
@@ -350,7 +358,7 @@ export default function PedidosView() {
                       {p.pdf_ruta && (
                         <span
                           style={{
-                            fontSize: 11,
+                            fontSize: 13,
                             color: "var(--text-4)",
                             display: "flex",
                             alignItems: "center",
@@ -362,7 +370,7 @@ export default function PedidosView() {
                         </span>
                       )}
                       <span style={{
-                        fontSize: 10, color: est.color, fontWeight: 500,
+                        fontSize: 12, color: est.color, fontWeight: 500,
                         display: "flex", alignItems: "center", gap: 4,
                       }}>
                         <SVG name={ROLE_META[est.role]?.icon || "user"} size={11} color={est.color} />
@@ -469,7 +477,7 @@ export default function PedidosView() {
                         )}
 
                         {/* Transportista flow at estado 2: Sign -> Confirm */}
-                        {canSign(p) && (
+                        {canSign(p) && (!p.pdf_firma || localStorage.getItem('firma_' + p.id)) && (
                           <>
                             <Btn
                               variant={localStorage.getItem('firma_' + p.id) ? "outline" : "primary"}
@@ -492,8 +500,21 @@ export default function PedidosView() {
                           </>
                         )}
 
-                        {/* Advance state button (hide at estado 2 if canSign) */}
-                        {showAdvanceBtn(p) && !canSign(p) && (
+                        {/* Opción de reescribir firma si ya está firmado */}
+                        {canSign(p) && p.pdf_firma && !localStorage.getItem('firma_' + p.id) && (
+                          <Btn
+                            variant="outline"
+                            size="sm"
+                            icon="edit"
+                            style={{ borderColor: 'var(--success)', color: 'var(--success)' }}
+                            onClick={() => setFirmaPedido(p)}
+                          >
+                            Re-firmar
+                          </Btn>
+                        )}
+
+                        {/* Advance state button (hide at estado 2 if canSign is not fulfilled, meaning no pdf_firma on server, or if there's an unconfirmed signature) */}
+                        {showAdvanceBtn(p) && (!canSign(p) || p.pdf_firma) && !localStorage.getItem('firma_' + p.id) && (
                           <Btn
                             variant="primary"
                             size="sm"
@@ -503,7 +524,7 @@ export default function PedidosView() {
                               setConfirmAction("advance");
                             }}
                           >
-                            {est.action}
+                            {p.estado_actual === 2 ? "Completar Carga" : est.action}
                           </Btn>
                         )}
                       </>
@@ -527,6 +548,12 @@ export default function PedidosView() {
         open={!!firmaPedido}
         onClose={() => setFirmaPedido(null)}
         pedido={firmaPedido}
+      />
+      <PDFReviewModal
+        open={!!reviewPedido}
+        onClose={() => setReviewPedido(null)}
+        pedido={reviewPedido}
+        onConfirm={advanceOrder}
       />
     </div>
   );

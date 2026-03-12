@@ -1,9 +1,12 @@
 from database.supabase_client_admin import supabase_admin
 from datetime import datetime
+import os
 import uuid
 import tempfile
 import shutil
 import base64
+import time
+import threading
 from pathlib import Path
 
 # OCR imports (usa el paquete local `ocr/src`)
@@ -11,14 +14,9 @@ from ocr.src.pdf_to_img import convert_pdf_to_images
 from ocr.src.ocr import process_image_with_ocr, get_ocr_data
 from ocr.src.extract import extract_albaran_data
 from openpyxl import Workbook
-from io import BytesIO
-
-# PDF manipulation for signature embedding
-import fitz  # PyMuPDF — para normalizar orientacion
 from pypdf import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas as rl_canvas
-from reportlab.lib.utils import ImageReader
-
+from io import BytesIO
+import fitz
 class PedidosService:
     
     ESTADOS = {
@@ -76,7 +74,7 @@ class PedidosService:
         método ya está protegida por autenticación).
         """
         pedido = (
-            supabase
+            supabase_admin
             .table("pedidos")
             .select("*")
             .eq("id", pedido_id)
@@ -153,6 +151,29 @@ class PedidosService:
             tmp_pdf_path = tmp_pdf.name
             print(f"[CREATE_PEDIDO] PDF guardado en temporales: {tmp_pdf_path}")
             
+            # RECTIFICAR ORIENTACIÓN: Si el documento viene horizontal, rotarlo a vertical.
+            try:
+                reader = PdfReader(tmp_pdf_path)
+                writer = PdfWriter()
+                modificado = False
+                
+                for page in reader.pages:
+                    w = float(page.mediabox.width)
+                    h = float(page.mediabox.height)
+                    
+                    if w > h:
+                        page.rotate(270)
+                        modificado = True
+                    
+                    writer.add_page(page)
+                
+                if modificado:
+                    with open(tmp_pdf_path, 'wb') as f_out:
+                        writer.write(f_out)
+                    print("[CREATE_PEDIDO] PDF corregido: Rotado a formato vertical exitosamente.")
+            except Exception as e:
+                print(f"[CREATE_PEDIDO][ERROR] Error ignorado al intentar rotar el PDF: {e}")
+
             # Subir a Supabase Storage
             with open(tmp_pdf_path, 'rb') as f:
                 supabase_admin.storage.from_(self.BUCKET).upload(
@@ -186,33 +207,37 @@ class PedidosService:
             print(f"[CREATE_PEDIDO][ERROR] Error al crear pedido en BD: {e}")
             return {"error": f"Error al crear pedido: {e}"}
 
-        # Procesar OCR para extraer productos del PDF
+        tmp_images_dir = None
         try:
-            print(f"[OCR] Iniciando procesamiento OCR para pedido {pedido_id}")
-            print(f"[OCR] archivo temporal: {tmp_pdf_path}")
+            ocr_total_start = time.time()
+            print(f"[OCR] Iniciando procesamiento OCR (background) para pedido {pedido_id}")
 
-            # Crear un directorio temporal para imágenes
             tmp_images_dir = Path(tempfile.mkdtemp())
-            print(f"[OCR] directorio temporal de imágenes: {tmp_images_dir}")
 
             # Convertir PDF a imágenes
             try:
-                image_files = convert_pdf_to_images(tmp_pdf_path, tmp_images_dir)
+                ocr_dpi = int(os.getenv('OCR_DPI', '220'))
+                convert_start = time.time()
+                print(f"[OCR] convert_pdf_to_images START pedido={pedido_id} dpi={ocr_dpi}")
+                image_files = convert_pdf_to_images(tmp_pdf_path, tmp_images_dir, dpi=ocr_dpi)
+                print(f"[OCR] convert_pdf_to_images DONE pedido={pedido_id} elapsed={time.time()-convert_start:.2f}s")
             except Exception as e:
                 print(f"[OCR][ERROR] error al convertir PDF a imágenes: {e}")
                 image_files = []
 
             print(f"[OCR] imágenes generadas: {len(image_files)}")
-            for p in image_files:
-                print(f"[OCR] - {p}")
 
             # Ejecutar OCR sobre cada imagen y recolectar texto y datos
             all_text = ""
             ocr_data_list = []
-            for img in image_files:
+            for idx, img in enumerate(image_files, start=1):
+                page_start = time.time()
+                print(f"[OCR] Página {idx}/{len(image_files)} START img={img}")
                 try:
+                    txt_start = time.time()
+                    print(f"[OCR] process_image_with_ocr START img={img}")
                     t = process_image_with_ocr(img)
-                    print(f"[OCR] OCR texto longitud ({img}): {len(t)}")
+                    print(f"[OCR] process_image_with_ocr DONE img={img} elapsed={time.time()-txt_start:.2f}s chars={len(t)}")
                 except Exception as e:
                     print(f"[OCR][ERROR] error en process_image_with_ocr para {img}: {e}")
                     t = ""
@@ -220,12 +245,21 @@ class PedidosService:
                 all_text += t + "\n"
 
                 try:
+                    data_start = time.time()
+                    print(f"[OCR] get_ocr_data START img={img}")
                     data = get_ocr_data(img, lang='spa+por')
                     if data:
-                        print(f"[OCR] get_ocr_data returned words: {len(data.get('text', [])) if isinstance(data, dict) else 'n/a'}")
+                        print(
+                            f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s "
+                            f"words={len(data.get('text', [])) if isinstance(data, dict) else 'n/a'}"
+                        )
                         ocr_data_list.append(data)
+                    else:
+                        print(f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s result=None")
                 except Exception as e:
                     print(f"[OCR][ERROR] error en get_ocr_data para {img}: {e}")
+
+                print(f"[OCR] Página {idx}/{len(image_files)} DONE elapsed={time.time()-page_start:.2f}s")
 
             # Extraer productos del albarán
             try:
@@ -236,34 +270,30 @@ class PedidosService:
 
             productos = albaran_data.get('productos', [])
             print(f"[OCR] productos extraidos: {len(productos)}")
-            for producto in productos[:10]:
-                print(f"[OCR] producto: {producto}")
 
-            # Insertar productos en la tabla 'pedido_productos' usando supabase_admin (bypass RLS)
+            # Insertar productos en la tabla 'pedido_productos'
             if productos:
                 for producto in productos:
                     try:
-                        # usar peso en kg como cantidad
                         kilos = producto.get('peso_kg') or 0
                         fila = {
                             'pedido_id': pedido_id,
                             'nombre_producto': producto.get('especie') or producto.get('linea_original'),
                             'cantidad': kilos,
-                            'precio': producto.get('precio') or 0
-                            
+                            'precio': producto.get('precio') or 0,
                         }
                         supabase_admin.table('pedido_productos').insert(fila).execute()
-                        print(f"[OCR] Producto insertado: {fila['nombre_producto']} - {fila['cantidad']} kg - {fila['precio']} €") ####################################3
+                        print(f"[OCR] Producto insertado: {fila['nombre_producto']} - {fila['cantidad']} kg - {fila['precio']} €")
                     except Exception as e:
                         print(f"[OCR][ERROR] Error al insertar producto: {e}")
             else:
                 print(f"[OCR] WARNING: No se extrajeron productos del PDF")
 
+            print(f"[OCR] Pipeline completo pedido={pedido_id} elapsed={time.time()-ocr_total_start:.2f}s")
+
         except Exception as e:
-            # No abortar la creación del pedido si OCR falla; registrar si es necesario
             print(f"[OCR][WARNING] Error procesando OCR del PDF para pedido {pedido_id}: {e}")
         finally:
-            # Limpiar archivos temporales
             try:
                 if tmp_pdf_path and Path(tmp_pdf_path).exists():
                     Path(tmp_pdf_path).unlink()
@@ -277,6 +307,7 @@ class PedidosService:
             except Exception:
                 pass
 
+
         return response.data
     
     # =========================
@@ -288,7 +319,7 @@ class PedidosService:
         pedido = (
             supabase_admin
             .table("pedidos")
-            .select("pdf_url")
+            .select("pdf_url, pdf_firmado")
             .eq("id", pedido_id)
             .maybe_single()
             .execute()
@@ -297,7 +328,7 @@ class PedidosService:
         if not pedido.data:
             return {"error": "Pedido no encontrado"}
 
-        nombre_archivo = pedido.data["pdf_url"]
+        nombre_archivo = pedido.data.get("pdf_firmado") or pedido.data.get("pdf_url")
 
         if not nombre_archivo:
             return {"error": "Este pedido no tiene PDF"}
@@ -309,6 +340,38 @@ class PedidosService:
         )
 
         return signed_url
+    
+    def obtener_pdf_preview(self, pedido_id):
+        pedido = (
+            supabase_admin
+            .table("pedidos")
+            .select("pdf_url")
+            .eq("id", pedido_id)
+            .maybe_single()
+            .execute()
+        )
+
+        if not pedido.data or not pedido.data.get("pdf_url"):
+            return {"error": "Este pedido no tiene PDF"}
+
+        try:
+            pdf_bytes = supabase_admin.storage.from_(self.BUCKET).download(pedido.data["pdf_url"])
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            if len(doc) == 0:
+                return {"error": "PDF vacío"}
+                
+            page = doc[0]
+            # Si es apaisado, lo mostramos derecho para que coincida con lo que procesa la firma
+            if page.rect.width > page.rect.height:
+                page.set_rotation(page.rotation + 270)
+                
+            # Render a imagen (DPI ~150 para que no sea inmensa ni se vea mal)
+            mat = fitz.Matrix(2.0, 2.0)
+            pix = page.get_pixmap(matrix=mat)
+            return pix.tobytes("png")
+        except Exception as e:
+            print(f"[PREVIEW][ERROR] Error generando preview: {e}")
+            return {"error": "Error procesando el PDF para preview"}
     
 
     
@@ -376,7 +439,11 @@ class PedidosService:
         if estado_actual <= 0:
             return {"error": "El pedido ya está en el primer estado"}
 
-        # Admin y oficina pueden retroceder cualquier estado
+        # Ni la oficina ni el administrador pueden devolver pedidos que ya han sido completados por el transportista (estado 3)
+        if estado_actual == 3 and rol_usuario in ("admin", "oficina"):
+            return {"error": "No se puede devolver un pedido que ya ha sido firmado y confirmado por el transportista"}
+
+        # Admin y oficina pueden retroceder cualquier estado (salvo restricción anterior)
         # Los demás roles solo pueden retroceder su propio estado
         if rol_usuario not in ("admin", "oficina"):
             if rol_usuario not in self.ESTADOS:
@@ -386,10 +453,19 @@ class PedidosService:
 
         estado_anterior = estado_actual - 1
 
+        update_data = {"estado": estado_anterior}
+        
+        # Si el pedido está en manos del transportista (estado 2) y se devuelve a logística (1),
+        # quitamos la firma porque el proceso de carga se está invalidando o corrigiendo.
+        # Si ya está en oficina (estado 3) y se devuelve, mantenemos la firma 'por si acaso' 
+        # (p.ej. corrección administrativa pero la firma de entrega sigue siendo válida).
+        if estado_actual == 2:
+            update_data["pdf_firmado"] = None
+
         response = (
             supabase_admin
             .table("pedidos")
-            .update({"estado": estado_anterior})
+            .update(update_data)
             .eq("id", pedido_id)
             .execute()
         )
@@ -461,86 +537,42 @@ class PedidosService:
             print(f"[FIRMA][ERROR] Error decodificando firma: {e}")
             return {"error": "Firma invalida"}
 
-        # 4. Normalizar orientacion con PyMuPDF (rotar horizontales a vertical de verdad)
+        # 4. Leer PDF original
         try:
-            src_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            dst_doc = fitz.open()  # documento nuevo vacio
-            for page in src_doc:
-                w, h = page.rect.width, page.rect.height
-                # Considerar rotacion existente para saber dimensiones reales
-                rot = page.rotation
-                if rot in (90, 270):
-                    w, h = h, w
-                if w > h:
-                    # Pagina horizontal: crear nueva pagina vertical y renderizar rotada
-                    new_page = dst_doc.new_page(width=h, height=w)
-                    new_page.show_pdf_page(new_page.rect, src_doc, page.number, rotate=90)
-                else:
-                    # Pagina ya vertical: copiar tal cual
-                    new_page = dst_doc.new_page(width=w, height=h)
-                    new_page.show_pdf_page(new_page.rect, src_doc, page.number)
-            normalized_bytes = dst_doc.tobytes()
-            dst_doc.close()
-            src_doc.close()
-            print(f"[FIRMA] PDF normalizado: {len(pdf_bytes)} -> {len(normalized_bytes)} bytes")
-        except Exception as e:
-            print(f"[FIRMA][ERROR] Error normalizando PDF: {e}")
-            normalized_bytes = pdf_bytes  # Usar original si falla
-
-        # 5. Leer PDF normalizado con pypdf y añadir firma a todas las paginas
-        try:
-            reader = PdfReader(BytesIO(normalized_bytes))
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as e:
             print(f"[FIRMA][ERROR] Error leyendo PDF: {e}")
             return {"error": "Error procesando PDF"}
 
         fecha_firma = datetime.now().strftime("%d/%m/%Y %H:%M")
-        writer = PdfWriter()
+        
+        font = fitz.Font("helv")
+        def center_text(page, text, text_y, firma_x, firma_width, font_size, color):
+            w = font.text_length(text, fontsize=font_size)
+            x_pos = firma_x + (firma_width - w) / 2
+            page.insert_text((x_pos, text_y), text, fontsize=font_size, color=color, fontname="helv")
 
-        for page in reader.pages:
-            page_w = float(page.mediabox.width)
-            page_h = float(page.mediabox.height)
-
-            # Crear overlay con la firma en esquina superior derecha
-            overlay_buf = BytesIO()
-            cv = rl_canvas.Canvas(overlay_buf, pagesize=(page_w, page_h))
-
-            margin = 20
-            fw, fh = 150, 50
-            fx = page_w - fw - margin
-            fy = page_h - fh - margin - 14
-
-            cv.setFont("Helvetica", 7)
-            cv.setFillColorRGB(0.4, 0.4, 0.4)
-            cv.drawCentredString(fx + fw / 2, fy + fh + 4, "Firma del cliente")
-
-            firma_image = ImageReader(BytesIO(firma_bytes))
-            cv.drawImage(firma_image, fx, fy, width=fw, height=fh, mask='auto')
-
-            cv.setStrokeColorRGB(0.7, 0.7, 0.7)
-            cv.setLineWidth(0.5)
-            cv.line(fx, fy - 2, fx + fw, fy - 2)
-
-            cv.setFont("Helvetica", 5)
-            cv.setFillColorRGB(0.5, 0.5, 0.5)
-            cv.drawCentredString(fx + fw / 2, fy - 10, f"Firmado: {fecha_firma}")
-
-            cv.save()
-            overlay_buf.seek(0)
-
-            overlay_page = PdfReader(overlay_buf).pages[0]
-            page.merge_page(overlay_page)
-            writer.add_page(page)
+        # 5. Procesar SOLO la primera pagina para la firma
+        if len(doc) > 0:
+            page = doc[0]
+            rect = page.rect
+            
+            # Igualar la rotacion que aplicamos en el preview (para que la firma cuadre)
+            if rect.width > rect.height:
+                page.set_rotation(page.rotation + 270)
+                rect = page.rect 
+            
+            # La imagen de la firma enviada desde el frontend tiene el mismo aspect ratio 
+            # y coordenadas relativas al documento completo
+            firma_rect = fitz.Rect(0, 0, rect.width, rect.height)
+            page.insert_image(firma_rect, stream=firma_bytes)
 
         # 7. Generar PDF firmado
-        signed_buffer = BytesIO()
-        writer.write(signed_buffer)
-        signed_buffer.seek(0)
-        signed_bytes = signed_buffer.read()
+        signed_bytes = doc.write()
         print(f"[FIRMA] PDF original: {len(pdf_bytes)} bytes, PDF firmado: {len(signed_bytes)} bytes")
 
         # 8. Subir PDF firmado a Supabase con nombre distinto (mantener original)
-        nombre_firmado = nombre_archivo.replace(".pdf", "_firmado.pdf")
+        nombre_firmado = nombre_archivo.replace(".pdf", f"_firmado_{uuid.uuid4().hex[:6]}.pdf")
         try:
             supabase_admin.storage.from_(self.BUCKET).upload(
                 nombre_firmado,
@@ -552,18 +584,17 @@ class PedidosService:
             print(f"[FIRMA][ERROR] Error subiendo PDF firmado: {e}")
             return {"error": f"Error subiendo PDF firmado: {e}"}
 
-        # 9. Avanzar estado a 3 y guardar ruta del PDF firmado
+        # 9. Guardar ruta del PDF firmado sin avanzar estado
         try:
             supabase_admin.table("pedidos").update({
-                "estado": 3,
                 "pdf_firmado": nombre_firmado
             }).eq("id", pedido_id).execute()
-            print(f"[FIRMA] Pedido {pedido_id} avanzado a estado 3, pdf_firmado: {nombre_firmado}")
+            print(f"[FIRMA] Pedido {pedido_id} pdf_firmado actualizado: {nombre_firmado}")
         except Exception as e:
-            print(f"[FIRMA][ERROR] Error actualizando pedido: {e}")
-            return {"error": "PDF firmado pero error al actualizar estado"}
+            print(f"[FIRMA][ERROR] Error actualizando BD: {e}")
+            return {"error": "PDF firmado pero error al actualizar estado en BD"}
 
-        return {"message": "Firma registrada correctamente", "pedido_id": pedido_id}
+        return {"message": "Firma incrustada en el PDF. Revisa el documento.", "pedido_id": pedido_id}
 
     def exportar_a_excel(self, pedido_id):
         response = supabase_admin.table("pedido_productos").select("*").eq("pedido_id", pedido_id).execute()

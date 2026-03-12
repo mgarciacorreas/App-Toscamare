@@ -1,12 +1,58 @@
 import os
+import shutil
+import time
 import pytesseract
 from PIL import Image, ImageOps
 
-# Ruta al ejecutable de Tesseract en Windows
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Ruta al ejecutable de Tesseract (compatible Windows y Linux/Docker)
+_tesseract = shutil.which('tesseract') or r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+pytesseract.pytesseract.tesseract_cmd = _tesseract
 
 # Usar tessdata local del proyecto (contiene spa, por, eng, osd)
 os.environ['TESSDATA_PREFIX'] = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tessdata')
+
+
+def _env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+OCR_TEXT_TIMEOUT = int(os.getenv('OCR_TEXT_TIMEOUT', '45'))
+OCR_DATA_TIMEOUT = int(os.getenv('OCR_DATA_TIMEOUT', '25'))
+OCR_OSD_TIMEOUT = int(os.getenv('OCR_OSD_TIMEOUT', '5'))
+OCR_USE_OSD = _env_bool('OCR_USE_OSD', default=False)
+OCR_PRIMARY_LANG = os.getenv('OCR_PRIMARY_LANG', 'spa')
+OCR_PRIMARY_MIN_CHARS = int(os.getenv('OCR_PRIMARY_MIN_CHARS', '120'))
+
+
+def get_ocr_runtime_info(required_langs=None):
+    """Return runtime diagnostics to quickly validate OCR setup in production."""
+    required_langs = required_langs or ['spa', 'por', 'eng']
+    info = {
+        'tesseract_cmd': pytesseract.pytesseract.tesseract_cmd,
+        'tessdata_prefix': os.environ.get('TESSDATA_PREFIX'),
+        'tesseract_found': bool(shutil.which('tesseract') or os.path.exists(pytesseract.pytesseract.tesseract_cmd or '')),
+        'version': None,
+        'available_langs': [],
+        'missing_langs': [],
+    }
+
+    try:
+        info['version'] = str(pytesseract.get_tesseract_version())
+    except Exception as e:
+        info['version'] = f'error: {e}'
+
+    try:
+        langs = pytesseract.get_languages(config='')
+        info['available_langs'] = sorted(langs)
+        info['missing_langs'] = [l for l in required_langs if l not in langs]
+    except Exception as e:
+        info['missing_langs'] = list(required_langs)
+        info['available_langs'] = [f'error: {e}']
+
+    return info
 
 
 # ============================================================
@@ -72,7 +118,7 @@ def detect_language_from_image(image_path):
 
 
 
-def process_image_with_ocr(image_path, lang='spa+por'):
+def process_image_with_ocr(image_path, lang='spa+por', timeout_sec=None, use_osd=None):
     """
     Procesa una imagen con Tesseract OCR
     Aplica una orientación básica para documentos verticales:
@@ -86,7 +132,12 @@ def process_image_with_ocr(image_path, lang='spa+por'):
     Returns:
         Texto extraído de la imagen
     """
+    timeout_sec = OCR_TEXT_TIMEOUT if timeout_sec is None else timeout_sec
+    use_osd = OCR_USE_OSD if use_osd is None else use_osd
+
     image = Image.open(image_path)
+    step_start = time.time()
+    print(f"[OCR][process_image_with_ocr] START image={image_path} lang={lang} timeout={timeout_sec} use_osd={use_osd}")
 
     # Aplicar transpose EXIF primero
     try:
@@ -96,16 +147,24 @@ def process_image_with_ocr(image_path, lang='spa+por'):
 
     # Si está en formato landscape, rotamos 90° para ponerlo en portrait
     if image.width > image.height:
+        print(f"[OCR][process_image_with_ocr] rotate portrait width={image.width} height={image.height}")
         image = image.rotate(90, expand=True)
 
     # Intentar detectar rotación 180 usando OSD (rápido)
-    try:
-        osd = pytesseract.image_to_osd(image, lang=lang)
-        rot = _parse_osd_rotation(osd)
-        if rot == 180:
-            image = image.rotate(180, expand=True)
-    except:
-        pass
+    if use_osd:
+        try:
+            osd_start = time.time()
+            print(f"[OCR][process_image_with_ocr] OSD start image={image_path} timeout={OCR_OSD_TIMEOUT}")
+            osd = pytesseract.image_to_osd(image, lang=lang, timeout=OCR_OSD_TIMEOUT)
+            print(f"[OCR][process_image_with_ocr] OSD done image={image_path} elapsed={time.time()-osd_start:.2f}s")
+            rot = _parse_osd_rotation(osd)
+            if rot == 180:
+                image = image.rotate(180, expand=True)
+                print(f"[OCR][process_image_with_ocr] OSD rotate=180 image={image_path}")
+        except Exception as e:
+            print(f"[OCR][process_image_with_ocr] OSD skipped/fail image={image_path} error={e}")
+    else:
+        print(f"[OCR][process_image_with_ocr] OSD disabled image={image_path}")
 
     # Convertir a RGB si no lo es
     if image.mode != 'RGB':
@@ -114,10 +173,34 @@ def process_image_with_ocr(image_path, lang='spa+por'):
     # OCR directo con configuración rápido
     custom_config = r'--oem 3 --psm 6'
     try:
-        text = pytesseract.image_to_string(image, lang=lang, config=custom_config)
+        # Fast pass: use a single language first (usually much faster on low CPU).
+        # Fallback to requested multi-language only if result is too short.
+        first_lang = OCR_PRIMARY_LANG if '+' in lang else lang
+
+        first_start = time.time()
+        print(f"[OCR][process_image_with_ocr] OCR start image={image_path} lang={first_lang} config={custom_config}")
+        text = pytesseract.image_to_string(image, lang=first_lang, config=custom_config, timeout=timeout_sec)
+        print(
+            f"[OCR][process_image_with_ocr] OCR done image={image_path} lang={first_lang} "
+            f"elapsed={time.time()-first_start:.2f}s chars={len(text)}"
+        )
+
+        if '+' in lang and len((text or '').strip()) < OCR_PRIMARY_MIN_CHARS:
+            fallback_start = time.time()
+            print(
+                f"[OCR][process_image_with_ocr] OCR fallback start image={image_path} "
+                f"lang={lang} reason=short_text({len((text or '').strip())}<{OCR_PRIMARY_MIN_CHARS})"
+            )
+            text = pytesseract.image_to_string(image, lang=lang, config=custom_config, timeout=timeout_sec)
+            print(
+                f"[OCR][process_image_with_ocr] OCR fallback done image={image_path} lang={lang} "
+                f"elapsed={time.time()-fallback_start:.2f}s chars={len(text)}"
+            )
+
+        print(f"[OCR][process_image_with_ocr] TOTAL image={image_path} elapsed={time.time()-step_start:.2f}s")
         return text
     except Exception as e:
-        print(f"Error en OCR: {e}")
+        print(f"[OCR][process_image_with_ocr][ERROR] image={image_path} elapsed={time.time()-step_start:.2f}s error={e}")
         return ""
 
 def _parse_osd_rotation(osd_text):
@@ -151,6 +234,8 @@ def get_ocr_data(image_path, lang='eng', config=None):
         Dict con información detallada del OCR
     """
     image = Image.open(image_path)
+    step_start = time.time()
+    print(f"[OCR][get_ocr_data] START image={image_path} lang={lang} timeout={OCR_DATA_TIMEOUT}")
     try:
         image = ImageOps.exif_transpose(image)
     except:
@@ -158,6 +243,7 @@ def get_ocr_data(image_path, lang='eng', config=None):
 
     # Si la imagen viene en landscape, rotar para portrait (igual que en process_image)
     if image.width > image.height:
+        print(f"[OCR][get_ocr_data] rotate portrait width={image.width} height={image.height}")
         image = image.rotate(90, expand=True)
 
     if image.mode != 'RGB':
@@ -166,12 +252,21 @@ def get_ocr_data(image_path, lang='eng', config=None):
     try:
         if config is None:
             config = r'--oem 3 --psm 6'
+        data_start = time.time()
+        print(f"[OCR][get_ocr_data] image_to_data start image={image_path} config={config}")
         data = pytesseract.image_to_data(
             image,
             lang=lang,
             config=config,
-            output_type=pytesseract.Output.DICT
+            output_type=pytesseract.Output.DICT,
+            timeout=OCR_DATA_TIMEOUT
+        )
+        words = len(data.get('text', [])) if isinstance(data, dict) else -1
+        print(
+            f"[OCR][get_ocr_data] image_to_data done image={image_path} "
+            f"elapsed={time.time()-data_start:.2f}s words={words} total={time.time()-step_start:.2f}s"
         )
         return data
-    except:
+    except Exception as e:
+        print(f"[OCR][get_ocr_data][ERROR] image={image_path} elapsed={time.time()-step_start:.2f}s error={e}")
         return None

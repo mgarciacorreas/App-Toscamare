@@ -246,6 +246,33 @@ def obtener_pdf(id):
     return jsonify(resultado), 200
 
 # =========================
+# OBTENER PREVIEW DE PDF
+# =========================
+@pedidos_bp.route('/<uuid:id>/pdf-preview', methods=['GET'])
+def obtener_pdf_preview(id):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        return respuesta_error("Token requerido", 401)
+
+    try:
+        token = auth_header.split(" ")[1]
+    except IndexError:
+        return respuesta_error("Formato de token inválido", 401)
+
+    payload = verificar_jwt(token)
+    if not payload:
+        return respuesta_error("Token inválido", 401)
+
+    resultado = service.obtener_pdf_preview(str(id))
+
+    if isinstance(resultado, dict) and "error" in resultado:
+        return respuesta_error(resultado["error"], 404)
+
+    # El resultado sería una imagen en binario, la enviamos usando send_file
+    from io import BytesIO
+    return send_file(BytesIO(resultado), mimetype='image/png')
+
+# =========================
 # FIRMAR PEDIDO (transportista recoge firma del cliente)
 # =========================
 

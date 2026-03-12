@@ -75,7 +75,8 @@ function normalizePedido(p) {
     cliente: p.cliente_nombre || "",
     estado_actual:
       typeof p.estado === "number" ? p.estado : parseInt(p.estado, 10) || 0,
-    pdf_ruta: p.pdf_url || null,
+    pdf_firma: p.pdf_firmado || null,
+    pdf_ruta: p.pdf_firmado || p.pdf_url || null,
     // DB uses fecha_creacion/fecha_actualizacion (not created_at/updated_at)
     fecha_creacion: p.fecha_creacion || p.created_at || null,
     fecha_actualizacion: p.fecha_actualizacion || p.fecha_creacion || null,
@@ -186,6 +187,18 @@ export async function getPDFSignedUrl(pedidoId) {
   const data = await request("/pedidos/" + pedidoId + "/pdf");
   // Backend returns { path, signedURL } or { signedUrl }
   return data.signedURL || data.signedUrl || data.signed_url || null;
+}
+
+export function getPDFPreviewUrl(pedidoId) {
+  const token = getStoredToken();
+  // Fetch from the backend returning raw image, we can just use the absolute path 
+  // with token query param if the backend supports it, but since backend uses Authorization header
+  // we must fetch it and create an object URL.
+  return fetch(API_BASE + "/pedidos/" + pedidoId + "/pdf-preview", {
+    headers: { Authorization: "Bearer " + token }
+  })
+    .then(res => res.ok ? res.blob() : Promise.reject())
+    .then(blob => URL.createObjectURL(blob));
 }
 
 // ── Firma ───────────────────────────────────────────────────
