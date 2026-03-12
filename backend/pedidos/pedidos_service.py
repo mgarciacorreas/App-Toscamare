@@ -207,164 +207,106 @@ class PedidosService:
             print(f"[CREATE_PEDIDO][ERROR] Error al crear pedido en BD: {e}")
             return {"error": f"Error al crear pedido: {e}"}
 
-        # ── Intento 1: extracción directa de texto (PDF con capa de texto) ─────────
-        # Funciona de forma síncrona y es instantánea.
-        # Si hay texto suficiente, insertamos productos aquí y NO lanzamos OCR.
-        _direct_text_ok = False
+        tmp_images_dir = None
         try:
-            _t0 = time.time()
-            _doc = fitz.open(tmp_pdf_path)
-            _direct_text = "\n".join(page.get_text() for page in _doc)
-            _doc.close()
-            _direct_chars = len(_direct_text.strip())
-            print(f"[CREATE_PEDIDO] Texto directo extraído: {_direct_chars} chars en {time.time()-_t0:.2f}s")
+            ocr_total_start = time.time()
+            print(f"[OCR] Iniciando procesamiento OCR (background) para pedido {pedido_id}")
 
-            _min_chars = int(os.getenv('PDF_DIRECT_TEXT_MIN_CHARS', '80'))
-            if _direct_chars >= _min_chars:
-                print(f"[CREATE_PEDIDO] Usando extracción directa de texto (sin OCR)")
-                try:
-                    _albaran = extract_albaran_data(_direct_text)
-                    _productos = _albaran.get('productos', [])
-                    print(f"[CREATE_PEDIDO] Productos extraídos (directo): {len(_productos)}")
-                    for _prod in _productos:
-                        try:
-                            _kilos = _prod.get('peso_kg') or 0
-                            _fila = {
-                                'pedido_id': pedido_id,
-                                'nombre_producto': _prod.get('especie') or _prod.get('linea_original'),
-                                'cantidad': _kilos,
-                                'precio': _prod.get('precio') or 0,
-                            }
-                            supabase_admin.table('pedido_productos').insert(_fila).execute()
-                            print(f"[CREATE_PEDIDO] Producto insertado: {_fila['nombre_producto']}")
-                        except Exception as _e:
-                            print(f"[CREATE_PEDIDO][ERROR] Error insertando producto directo: {_e}")
-                    _direct_text_ok = True
-                except Exception as _e:
-                    print(f"[CREATE_PEDIDO][WARN] Error en extract_albaran_data (directo): {_e}")
-            else:
-                print(f"[CREATE_PEDIDO] Texto insuficiente ({_direct_chars} chars) — usando OCR")
-        except Exception as _e:
-            print(f"[CREATE_PEDIDO][WARN] Error en extracción directa: {_e}")
+            tmp_images_dir = Path(tempfile.mkdtemp())
 
-        if _direct_text_ok:
-            # PDF con texto — limpiar temporal y responder ya
+            # Convertir PDF a imágenes
             try:
-                Path(tmp_pdf_path).unlink()
+                ocr_dpi = int(os.getenv('OCR_DPI', '220'))
+                convert_start = time.time()
+                print(f"[OCR] convert_pdf_to_images START pedido={pedido_id} dpi={ocr_dpi}")
+                image_files = convert_pdf_to_images(tmp_pdf_path, tmp_images_dir, dpi=ocr_dpi)
+                print(f"[OCR] convert_pdf_to_images DONE pedido={pedido_id} elapsed={time.time()-convert_start:.2f}s")
+            except Exception as e:
+                print(f"[OCR][ERROR] error al convertir PDF a imágenes: {e}")
+                image_files = []
+
+            print(f"[OCR] imágenes generadas: {len(image_files)}")
+
+            # Ejecutar OCR sobre cada imagen y recolectar texto y datos
+            all_text = ""
+            ocr_data_list = []
+            for idx, img in enumerate(image_files, start=1):
+                page_start = time.time()
+                print(f"[OCR] Página {idx}/{len(image_files)} START img={img}")
+                try:
+                    txt_start = time.time()
+                    print(f"[OCR] process_image_with_ocr START img={img}")
+                    t = process_image_with_ocr(img)
+                    print(f"[OCR] process_image_with_ocr DONE img={img} elapsed={time.time()-txt_start:.2f}s chars={len(t)}")
+                except Exception as e:
+                    print(f"[OCR][ERROR] error en process_image_with_ocr para {img}: {e}")
+                    t = ""
+
+                all_text += t + "\n"
+
+                try:
+                    data_start = time.time()
+                    print(f"[OCR] get_ocr_data START img={img}")
+                    data = get_ocr_data(img, lang='spa+por')
+                    if data:
+                        print(
+                            f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s "
+                            f"words={len(data.get('text', [])) if isinstance(data, dict) else 'n/a'}"
+                        )
+                        ocr_data_list.append(data)
+                    else:
+                        print(f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s result=None")
+                except Exception as e:
+                    print(f"[OCR][ERROR] error en get_ocr_data para {img}: {e}")
+
+                print(f"[OCR] Página {idx}/{len(image_files)} DONE elapsed={time.time()-page_start:.2f}s")
+
+            # Extraer productos del albarán
+            try:
+                albaran_data = extract_albaran_data(all_text, ocr_data_list=ocr_data_list)
+            except Exception as e:
+                print(f"[OCR][ERROR] error extrayendo productos: {e}")
+                albaran_data = {'productos': []}
+
+            productos = albaran_data.get('productos', [])
+            print(f"[OCR] productos extraidos: {len(productos)}")
+
+            # Insertar productos en la tabla 'pedido_productos'
+            if productos:
+                for producto in productos:
+                    try:
+                        kilos = producto.get('peso_kg') or 0
+                        fila = {
+                            'pedido_id': pedido_id,
+                            'nombre_producto': producto.get('especie') or producto.get('linea_original'),
+                            'cantidad': kilos,
+                            'precio': producto.get('precio') or 0,
+                        }
+                        supabase_admin.table('pedido_productos').insert(fila).execute()
+                        print(f"[OCR] Producto insertado: {fila['nombre_producto']} - {fila['cantidad']} kg - {fila['precio']} €")
+                    except Exception as e:
+                        print(f"[OCR][ERROR] Error al insertar producto: {e}")
+            else:
+                print(f"[OCR] WARNING: No se extrajeron productos del PDF")
+
+            print(f"[OCR] Pipeline completo pedido={pedido_id} elapsed={time.time()-ocr_total_start:.2f}s")
+
+        except Exception as e:
+            print(f"[OCR][WARNING] Error procesando OCR del PDF para pedido {pedido_id}: {e}")
+        finally:
+            try:
+                if tmp_pdf_path and Path(tmp_pdf_path).exists():
+                    Path(tmp_pdf_path).unlink()
+                    print(f"[OCR] Archivo temporal PDF limpiado")
             except Exception:
                 pass
-            return response.data
-
-        # ── Intento 2: OCR con Tesseract en hilo de fondo (PDF escaneado) ────────
-        def _run_ocr_background(pedido_id, tmp_pdf_path):
-            tmp_images_dir = None
             try:
-                ocr_total_start = time.time()
-                print(f"[OCR] Iniciando procesamiento OCR (background) para pedido {pedido_id}")
+                if tmp_images_dir and tmp_images_dir.exists():
+                    shutil.rmtree(tmp_images_dir)
+                    print(f"[OCR] Directorio temporal de imágenes limpiado")
+            except Exception:
+                pass
 
-                tmp_images_dir = Path(tempfile.mkdtemp())
-
-                # Convertir PDF a imágenes
-                try:
-                    ocr_dpi = int(os.getenv('OCR_DPI', '220'))
-                    convert_start = time.time()
-                    print(f"[OCR] convert_pdf_to_images START pedido={pedido_id} dpi={ocr_dpi}")
-                    image_files = convert_pdf_to_images(tmp_pdf_path, tmp_images_dir, dpi=ocr_dpi)
-                    print(f"[OCR] convert_pdf_to_images DONE pedido={pedido_id} elapsed={time.time()-convert_start:.2f}s")
-                except Exception as e:
-                    print(f"[OCR][ERROR] error al convertir PDF a imágenes: {e}")
-                    image_files = []
-
-                print(f"[OCR] imágenes generadas: {len(image_files)}")
-
-                # Ejecutar OCR sobre cada imagen y recolectar texto y datos
-                all_text = ""
-                ocr_data_list = []
-                for idx, img in enumerate(image_files, start=1):
-                    page_start = time.time()
-                    print(f"[OCR] Página {idx}/{len(image_files)} START img={img}")
-                    try:
-                        txt_start = time.time()
-                        print(f"[OCR] process_image_with_ocr START img={img}")
-                        t = process_image_with_ocr(img)
-                        print(f"[OCR] process_image_with_ocr DONE img={img} elapsed={time.time()-txt_start:.2f}s chars={len(t)}")
-                    except Exception as e:
-                        print(f"[OCR][ERROR] error en process_image_with_ocr para {img}: {e}")
-                        t = ""
-
-                    all_text += t + "\n"
-
-                    try:
-                        data_start = time.time()
-                        print(f"[OCR] get_ocr_data START img={img}")
-                        data = get_ocr_data(img, lang='spa+por')
-                        if data:
-                            print(
-                                f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s "
-                                f"words={len(data.get('text', [])) if isinstance(data, dict) else 'n/a'}"
-                            )
-                            ocr_data_list.append(data)
-                        else:
-                            print(f"[OCR] get_ocr_data DONE img={img} elapsed={time.time()-data_start:.2f}s result=None")
-                    except Exception as e:
-                        print(f"[OCR][ERROR] error en get_ocr_data para {img}: {e}")
-
-                    print(f"[OCR] Página {idx}/{len(image_files)} DONE elapsed={time.time()-page_start:.2f}s")
-
-                # Extraer productos del albarán
-                try:
-                    albaran_data = extract_albaran_data(all_text, ocr_data_list=ocr_data_list)
-                except Exception as e:
-                    print(f"[OCR][ERROR] error extrayendo productos: {e}")
-                    albaran_data = {'productos': []}
-
-                productos = albaran_data.get('productos', [])
-                print(f"[OCR] productos extraidos: {len(productos)}")
-
-                # Insertar productos en la tabla 'pedido_productos'
-                if productos:
-                    for producto in productos:
-                        try:
-                            kilos = producto.get('peso_kg') or 0
-                            fila = {
-                                'pedido_id': pedido_id,
-                                'nombre_producto': producto.get('especie') or producto.get('linea_original'),
-                                'cantidad': kilos,
-                                'precio': producto.get('precio') or 0,
-                            }
-                            supabase_admin.table('pedido_productos').insert(fila).execute()
-                            print(f"[OCR] Producto insertado: {fila['nombre_producto']} - {fila['cantidad']} kg - {fila['precio']} €")
-                        except Exception as e:
-                            print(f"[OCR][ERROR] Error al insertar producto: {e}")
-                else:
-                    print(f"[OCR] WARNING: No se extrajeron productos del PDF")
-
-                print(f"[OCR] Pipeline completo pedido={pedido_id} elapsed={time.time()-ocr_total_start:.2f}s")
-
-            except Exception as e:
-                print(f"[OCR][WARNING] Error procesando OCR del PDF para pedido {pedido_id}: {e}")
-            finally:
-                try:
-                    if tmp_pdf_path and Path(tmp_pdf_path).exists():
-                        Path(tmp_pdf_path).unlink()
-                        print(f"[OCR] Archivo temporal PDF limpiado")
-                except Exception:
-                    pass
-                try:
-                    if tmp_images_dir and tmp_images_dir.exists():
-                        shutil.rmtree(tmp_images_dir)
-                        print(f"[OCR] Directorio temporal de imágenes limpiado")
-                except Exception:
-                    pass
-
-        ocr_thread = threading.Thread(
-            target=_run_ocr_background,
-            args=(pedido_id, tmp_pdf_path),
-            daemon=True,
-            name=f"ocr-{pedido_id[:8]}"
-        )
-        ocr_thread.start()
-        print(f"[CREATE_PEDIDO] OCR lanzado en background (hilo={ocr_thread.name}), respondiendo al cliente ahora")
 
         return response.data
     
@@ -497,7 +439,11 @@ class PedidosService:
         if estado_actual <= 0:
             return {"error": "El pedido ya está en el primer estado"}
 
-        # Admin y oficina pueden retroceder cualquier estado
+        # Ni la oficina ni el administrador pueden devolver pedidos que ya han sido completados por el transportista (estado 3)
+        if estado_actual == 3 and rol_usuario in ("admin", "oficina"):
+            return {"error": "No se puede devolver un pedido que ya ha sido firmado y confirmado por el transportista"}
+
+        # Admin y oficina pueden retroceder cualquier estado (salvo restricción anterior)
         # Los demás roles solo pueden retroceder su propio estado
         if rol_usuario not in ("admin", "oficina"):
             if rol_usuario not in self.ESTADOS:
@@ -507,10 +453,19 @@ class PedidosService:
 
         estado_anterior = estado_actual - 1
 
+        update_data = {"estado": estado_anterior}
+        
+        # Si el pedido está en manos del transportista (estado 2) y se devuelve a logística (1),
+        # quitamos la firma porque el proceso de carga se está invalidando o corrigiendo.
+        # Si ya está en oficina (estado 3) y se devuelve, mantenemos la firma 'por si acaso' 
+        # (p.ej. corrección administrativa pero la firma de entrega sigue siendo válida).
+        if estado_actual == 2:
+            update_data["pdf_firmado"] = None
+
         response = (
             supabase_admin
             .table("pedidos")
-            .update({"estado": estado_anterior})
+            .update(update_data)
             .eq("id", pedido_id)
             .execute()
         )

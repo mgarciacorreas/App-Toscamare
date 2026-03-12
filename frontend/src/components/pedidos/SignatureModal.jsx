@@ -8,10 +8,11 @@ export default function SignatureModal({ open, onClose, pedido }) {
   const wrapperRef = useRef(null);
   const canvasContainerRef = useRef(null);
   const lastDataRef = useRef(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [penWidths, setPenWidths] = useState({ min: 0.5, max: 1 });
+  const [isFullscreen, setIsFullscreen] = useState(true);
+  const [penWidths, setPenWidths] = useState({ min: 1.5, max: 3.5 });
   const [bgUrl, setBgUrl] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(true);
+  const [rawPenBase, setRawPenBase] = useState(0.9); // Base thickness for minWidth
 
   useEffect(() => {
     if (open && pedido) {
@@ -41,6 +42,18 @@ export default function SignatureModal({ open, onClose, pedido }) {
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
+  // Attempt to enter browser fullscreen automatically when opened
+  useEffect(() => {
+    if (open && !document.fullscreenElement) {
+      // Small timeout to ensure wrapperRef is mounted
+      setTimeout(() => {
+        wrapperRef.current?.requestFullscreen().catch(() => {
+          // Silent catch if browser blocks automatic fullscreen
+        });
+      }, 100);
+    }
+  }, [open]);
+
   // Resize canvas so drawing tracks pointer accurately and pen width scales with container
   useEffect(() => {
     if (!open) return;
@@ -55,9 +68,12 @@ export default function SignatureModal({ open, onClose, pedido }) {
       const h = parent.offsetHeight;
       if (w === 0 || h === 0) return;
       
-      // Update pen thickness proportionally
+      // Update pen thickness proportionally (increased as requested)
       const scale = w / 350;
-      setPenWidths({ min: Math.max(0.2, 0.5 * scale), max: Math.max(0.5, 1 * scale) });
+      setPenWidths({ 
+        min: Math.max(0.5, rawPenBase * scale), 
+        max: Math.max(1, (rawPenBase + 2) * scale) 
+      });
       
       const ratio = Math.max(window.devicePixelRatio || 1, 1);
       const targetW = w * ratio;
@@ -100,7 +116,7 @@ export default function SignatureModal({ open, onClose, pedido }) {
       clearTimeout(resizeTimer);
       observer.disconnect();
     };
-  }, [open, bgUrl]);
+  }, [open, bgUrl, rawPenBase]);
 
   const handleClear = () => {
     sigRef.current?.clear();
@@ -130,7 +146,7 @@ export default function SignatureModal({ open, onClose, pedido }) {
   if (!pedido) return null;
 
   return (
-    <Modal open={open} onClose={onClose} title={"Firma - " + pedido.codigo}>
+    <Modal open={open} onClose={onClose} title={"Firma - " + pedido.codigo} fullScreen={isFullscreen}>
       <div 
         ref={wrapperRef} 
         style={{ 
@@ -143,12 +159,7 @@ export default function SignatureModal({ open, onClose, pedido }) {
           boxSizing: 'border-box'
         }}
       >
-        {isFullscreen && (
-          <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 600 }}>Firma - {pedido.codigo}</h2>
-            <Btn variant="ghost" icon="x" onClick={toggleFullscreen}>Cerrar completa</Btn>
-          </div>
-        )}
+        {/* Redundant header removed as Modal provides one */}
 
         {!isFullscreen && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -160,80 +171,175 @@ export default function SignatureModal({ open, onClose, pedido }) {
             </Btn>
           </div>
         )}
+        {isFullscreen && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+            <Btn variant="ghost" size="sm" icon="minimize" onClick={toggleFullscreen} title="Salir pantalla completa">
+              Salir pantalla completa
+            </Btn>
+          </div>
+        )}
 
-        <div style={{ flexGrow: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
-          <div
-            ref={canvasContainerRef}
-            style={{
-              position: 'relative',
-              borderRadius: "var(--r2)",
-              background: "var(--bg-2)",
-              overflow: 'hidden',
-              maxHeight: isFullscreen ? 'calc(100vh - 120px)' : '50vh',
-              maxWidth: isFullscreen ? 'calc(100vh - 120px)' : '100%',
-              display: 'inline-block', // shrinkwrap to img
-              boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-              border: "1px solid var(--border-2)"
-            }}
-          >
-            {loadingPdf && (
-              <div style={{ width: 300, height: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <p style={{ fontSize: 13, color: "var(--text-4)" }}>Cargando factura...</p>
+        <div style={{ 
+          flexGrow: 1, 
+          display: 'flex', 
+          flexDirection: isFullscreen ? 'row' : 'column', 
+          gap: 20, 
+          overflow: 'hidden',
+          minHeight: 0 // important for flex children to shrink
+        }}>
+          {/* Main Content: Canvas */}
+          <div style={{ 
+            flexGrow: 1, 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center',
+            position: 'relative',
+            background: isFullscreen ? 'rgba(0,0,0,0.03)' : 'transparent',
+            borderRadius: 'var(--r3)',
+            overflow: 'auto',
+            padding: isFullscreen ? 20 : 0
+          }}>
+            <div
+              ref={canvasContainerRef}
+              style={{
+                position: 'relative',
+                borderRadius: "var(--r2)",
+                background: "var(--bg-2)",
+                overflow: 'hidden',
+                maxHeight: '100%',
+                maxWidth: '100%',
+                display: 'inline-block', // shrinkwrap to img
+                boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+                border: "1px solid var(--border-2)"
+              }}
+            >
+              {loadingPdf && (
+                <div style={{ width: 300, height: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <p style={{ fontSize: 13, color: "var(--text-4)" }}>Cargando factura...</p>
+                </div>
+              )}
+              {!loadingPdf && bgUrl && (
+                <img 
+                  src={bgUrl} 
+                  alt="Documento" 
+                  style={{ 
+                    display: "block", 
+                    maxWidth: "100%", 
+                    maxHeight: isFullscreen ? 'calc(100vh - 100px)' : '50vh', 
+                    objectFit: "contain",
+                    pointerEvents: "none",
+                    userSelect: "none"
+                  }} 
+                />
+              )}
+              {!loadingPdf && !bgUrl && (
+                <div style={{ width: 300, height: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <p style={{ fontSize: 13, color: "var(--text-4)" }}>No se pudo cargar el PDF</p>
+                </div>
+              )}
+
+              {bgUrl && (
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 10 }}>
+                  <SignatureCanvas
+                    ref={sigRef}
+                    penColor="#000" // Negro
+                    minWidth={penWidths.min}
+                    maxWidth={penWidths.max}
+                    canvasProps={{
+                      className: "sigCanvas",
+                      style: { 
+                        width: "100%", 
+                        height: "100%", 
+                        display: "block",
+                        cursor: "crosshair"
+                      },
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Controls: Sidebar or Footer */}
+          <div style={{ 
+            width: isFullscreen ? 280 : '100%',
+            flexShrink: 0,
+            display: "flex", 
+            flexDirection: "column",
+            gap: 20,
+            padding: isFullscreen ? '24px' : '20px 0 0 0',
+            background: isFullscreen ? 'var(--bg-1)' : 'transparent',
+            borderRadius: "var(--r3)",
+            border: isFullscreen ? '1px solid var(--border-1)' : 'none',
+            justifyContent: isFullscreen ? 'flex-start' : 'center'
+          }}>
+            {isFullscreen && (
+              <div style={{ marginBottom: 10 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Controles</h3>
+                <p style={{ fontSize: 12, color: 'var(--text-4)' }}>Ajusta el trazo y guarda cuando termines.</p>
               </div>
             )}
-            {!loadingPdf && bgUrl && (
-              <img 
-                src={bgUrl} 
-                alt="Documento" 
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+                  Grosor del lápiz
+                </span>
+                <span style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--accent)' }}>
+                  {rawPenBase.toFixed(1)}
+                </span>
+              </div>
+              <input 
+                type="range" 
+                min="0.5" 
+                max="5" 
+                step="0.5" 
+                value={rawPenBase} 
+                onChange={(e) => setRawPenBase(parseFloat(e.target.value))}
                 style={{ 
-                  display: "block", 
-                  maxWidth: "100%", 
-                  maxHeight: isFullscreen ? 'calc(100vh - 120px)' : '50vh', 
-                  objectFit: "contain",
-                  pointerEvents: "none",
-                  userSelect: "none"
+                  accentColor: 'var(--accent)', 
+                  cursor: 'pointer',
+                  width: '100%',
+                  height: 6,
+                  borderRadius: 3
                 }} 
               />
-            )}
-            {!loadingPdf && !bgUrl && (
-              <div style={{ width: 300, height: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <p style={{ fontSize: 13, color: "var(--text-4)" }}>No se pudo cargar el PDF</p>
-              </div>
-            )}
+            </div>
 
-            {bgUrl && (
-              <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 10 }}>
-                <SignatureCanvas
-                  ref={sigRef}
-                  penColor="#000" // Negro
-                  minWidth={penWidths.min}
-                  maxWidth={penWidths.max}
-                  canvasProps={{
-                    className: "sigCanvas",
-                    style: { 
-                      width: "100%", 
-                      height: "100%", 
-                      display: "block",
-                      cursor: "crosshair"
-                    },
-                  }}
-                />
+            <div style={{ marginTop: isFullscreen ? 'auto' : 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Btn 
+                variant="primary" 
+                icon="check" 
+                size="lg"
+                onClick={handleSaveLocal}
+                style={{ 
+                  width: '100%',
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                  boxShadow: '0 8px 16px var(--accent-30)'
+                }}
+              >
+                Guardar Firma
+              </Btn>
+              
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Btn 
+                  variant="outline" 
+                  icon="trash" 
+                  onClick={handleClear}
+                  style={{ flex: 1 }}
+                >
+                  Borrar
+                </Btn>
+                <Btn 
+                  variant="secondary" 
+                  onClick={onClose}
+                  style={{ flex: 1 }}
+                >
+                  Cerrar
+                </Btn>
               </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: isFullscreen ? 'auto' : 0 }}>
-          <Btn variant="ghost" onClick={handleClear}>
-            Borrar firma
-          </Btn>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="outline" onClick={onClose}>
-              Cancelar
-            </Btn>
-            <Btn variant="primary" icon="check" onClick={handleSaveLocal}>
-              Guardar temporalmente
-            </Btn>
+            </div>
           </div>
         </div>
       </div>

@@ -7,6 +7,7 @@ import PedidoFormModal from "@/components/pedidos/PedidoFormModal";
 import PedidoDetailModal from "@/components/pedidos/PedidoDetailModal";
 import FirmaModal from "@/components/pedidos/FirmaModal";
 import SignatureModal from "@/components/pedidos/SignatureModal";
+import PDFReviewModal from "@/components/pedidos/PDFReviewModal";
 import * as api from "@/utils/api";
 
 export default function PedidosView() {
@@ -20,6 +21,7 @@ export default function PedidosView() {
   const [confirmAction, setConfirmAction] = useState(null); // 'advance' | 'rollback' | 'delete'
   const [actionLoading, setActionLoading] = useState(null);
   const [firmaPedido, setFirmaPedido] = useState(null);
+  const [reviewPedido, setReviewPedido] = useState(null);
 
   const userRol = session.user.rol;
   const effectiveRol = adminViewAs || userRol;
@@ -130,6 +132,8 @@ export default function PedidosView() {
   // Rollback: send pedido back one estado for corrections
   const canRollback = (p) => {
     if (p.estado_actual <= 0) return false;
+    // Ni la oficina ni el administrador pueden devolver pedidos ya firmados (estado 3)
+    if (p.estado_actual === 3 && (effectiveRol === ROLES.OFICINA || effectiveRol === ROLES.ADMIN)) return false;
     if (isAdmin || isOficina) return true;
     return ESTADOS[p.estado_actual]?.role === effectiveRol;
   };
@@ -162,8 +166,12 @@ export default function PedidosView() {
       localStorage.removeItem('firma_' + pedidoId);
       
       const pedido = pedidos.find(p => p.id === pedidoId);
-      showToast(pedido.codigo + " firmado. Revisa el PDF antes de completar la carga.", "info");
+      showToast(pedido.codigo + " firmado.", "info");
       await loadPedidos();
+      
+      // Auto-open review modal
+      const updatedPedido = (await api.fetchPedidos()).find(p => p.id === pedidoId);
+      if (updatedPedido) setReviewPedido(updatedPedido);
     } catch (e) {
       showToast(e.message || "Error al completar flujo", "error");
     } finally {
@@ -540,6 +548,12 @@ export default function PedidosView() {
         open={!!firmaPedido}
         onClose={() => setFirmaPedido(null)}
         pedido={firmaPedido}
+      />
+      <PDFReviewModal
+        open={!!reviewPedido}
+        onClose={() => setReviewPedido(null)}
+        pedido={reviewPedido}
+        onConfirm={advanceOrder}
       />
     </div>
   );

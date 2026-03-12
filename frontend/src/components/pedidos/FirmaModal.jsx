@@ -52,6 +52,8 @@ export default function FirmaModal({ open, onClose, pedido }) {
         <SignatureCanvas
           ref={sigRef}
           penColor="#111"
+          minWidth={0.9}
+          maxWidth={2.9}
           canvasProps={{
             width: 476,
             height: 200,
